@@ -156,6 +156,44 @@ $(document).ready(function() {
     function renderMainStatus(data) {
         var state = data.state || {};
         $("#scheduler_last_run").text(state.last_scheduler_run || "-");
+        renderCronStatus(data.cron || {});
+    }
+
+    function renderCronStatus(cron) {
+        cron = cron || {};
+
+        var text = "";
+        var label = "label-default";
+        var showButton = false;
+        var buttonText = "Создать задание Cron";
+
+        if (cron.exists && cron.enabled && cron.correct) {
+            label = "label-success";
+            text = "Есть, включено — " + (cron.schedule || "* * * * *");
+        } else if (cron.exists) {
+            label = cron.enabled ? "label-warning" : "label-danger";
+            text = cron.enabled ? "Есть, но требует исправления" : "Есть, но отключено";
+            text += " — " + (cron.schedule || "-");
+            showButton = true;
+            buttonText = "Исправить задание Cron";
+        } else {
+            label = "label-danger";
+            text = "Нет";
+            showButton = true;
+            buttonText = "Создать задание Cron";
+        }
+
+        $("#scheduler_cron_status").html('<span class="label ' + label + '">' + text + '</span>');
+        $("#btn_scheduler_create_cron").text(buttonText);
+        $("#btn_scheduler_create_cron").toggle(showButton);
+    }
+
+    function loadCronStatus() {
+        ajaxCall("/api/additional/scheduler/cronstatus", {}, function(data, status) {
+            if (data.status === "ok") {
+                renderCronStatus(data.cron || {});
+            }
+        });
     }
 
     function loadScheduler() {
@@ -170,6 +208,24 @@ $(document).ready(function() {
             }
         });
     }
+
+    $("#btn_scheduler_create_cron").click(function() {
+        var btn = $(this);
+        btn.prop("disabled", true);
+        showMessage("info", "Создаю задание Cron для Additional Scheduler...");
+
+        ajaxCall("/api/additional/scheduler/createcron", {}, function(data, status) {
+            btn.prop("disabled", false);
+
+            if (data.status === "ok") {
+                showMessage("success", data.message || "Задание Cron создано");
+                renderCronStatus(data.cron || {});
+            } else {
+                showMessage("danger", data.message || "Ошибка создания задания Cron");
+                renderCronStatus(data.cron || {});
+            }
+        });
+    });
 
     $("#btn_scheduler_save").click(function() {
         showMessage("info", "Сохраняю настройки Scheduler...");
@@ -240,14 +296,22 @@ $(document).ready(function() {
     <div class="scheduler-section">
         <h2>Общий Scheduler</h2>
 
-        <div class="alert alert-info">
-            В OPNsense Cron нужно создать только одно задание: <b>Additional Scheduler</b> с расписанием <b>* * * * *</b>.
-            Остальные расписания задаются здесь.
-        </div>
-
         <table class="table table-condensed">
             <tr>
-                <th style="width:260px;">Последний запуск Scheduler</th>
+                <th style="width:260px;">Задание Cron</th>
+                <td>
+                    <span id="scheduler_cron_status">-</span>
+                    <button id="btn_scheduler_create_cron" type="button" class="btn btn-xs btn-primary" style="display:none; margin-left: 10px;">
+                        Создать задание Cron
+                    </button>
+                </td>
+            </tr>
+            <tr>
+                <th>Требуемое расписание Cron</th>
+                <td><code>* * * * *</code></td>
+            </tr>
+            <tr>
+                <th>Последний запуск Scheduler</th>
                 <td id="scheduler_last_run">-</td>
             </tr>
         </table>

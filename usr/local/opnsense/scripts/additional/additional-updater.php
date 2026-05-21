@@ -527,7 +527,7 @@ function perform_update(array $info): array
 
     @chmod('/install.sh', 0755);
 
-    $installResult = run_command('/bin/sh /install.sh');
+    $installResult = run_command('/usr/bin/env ADDITIONAL_UPDATER_MODE=1 /bin/sh /install.sh');
 
     if ($installResult['exit_code'] !== 0) {
         throw new RuntimeException('install.sh завершился с ошибкой: ' . $installResult['output']);

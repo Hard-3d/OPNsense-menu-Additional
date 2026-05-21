@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Installing OPNsense Additional Menu v0.1.3..."
+echo "Installing OPNsense Additional Menu v0.1.4..."
 
 # ownership
 chown -R root:wheel /usr/local/opnsense/mvc/app/models/OPNsense/Additional 2>/dev/null || true
@@ -67,6 +67,11 @@ rm -rf /tmp/volt/*
 
 /usr/local/etc/rc.configure_plugins || true
 service configd restart || true
-configctl webgui restart || true
+
+if [ "${ADDITIONAL_UPDATER_MODE:-0}" = "1" ]; then
+    echo "Updater mode: webgui restart skipped. Reload the page after update."
+else
+    configctl webgui restart || true
+fi
 
 echo "Done. Logout and login again."

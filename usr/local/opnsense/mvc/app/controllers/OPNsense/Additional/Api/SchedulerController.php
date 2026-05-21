@@ -9,6 +9,9 @@ class SchedulerController extends ApiControllerBase
     private const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/scheduler.json';
     private const STATE_FILE = '/var/run/additional_scheduler_state.json';
     private const SCRIPT_FILE = '/usr/local/opnsense/scripts/additional/additional-scheduler.php';
+    private const CONFIG_XML = '/conf/config.xml';
+    private const CRON_DESCRIPTION = 'Additional Scheduler';
+    private const CRON_COMMAND = 'additional_scheduler run';
 
     private function tasksDefinition(): array
     {
@@ -223,6 +226,247 @@ class SchedulerController extends ApiControllerBase
         ];
     }
 
+
+    private function xmlValue($node, string $name, string $default = ''): string
+    {
+        if (!isset($node->{$name})) {
+            return $default;
+        }
+
+        return trim((string)$node->{$name});
+    }
+
+    private function cronJobMatches($job): bool
+    {
+        $description = $this->xmlValue($job, 'description');
+        $command = $this->xmlValue($job, 'command');
+
+        return $description === self::CRON_DESCRIPTION || $command === self::CRON_COMMAND;
+    }
+
+    private function cronScheduleTextFromJob($job): string
+    {
+        return sprintf(
+            '%s %s %s %s %s',
+            $this->xmlValue($job, 'minutes', '*'),
+            $this->xmlValue($job, 'hours', '*'),
+            $this->xmlValue($job, 'days', '*'),
+            $this->xmlValue($job, 'months', '*'),
+            $this->xmlValue($job, 'weekdays', '*')
+        );
+    }
+
+    private function isSchedulerCronCorrect($job): bool
+    {
+        return $this->xmlValue($job, 'minutes', '') === '*' &&
+            $this->xmlValue($job, 'hours', '') === '*' &&
+            $this->xmlValue($job, 'days', '') === '*' &&
+            $this->xmlValue($job, 'months', '') === '*' &&
+            $this->xmlValue($job, 'weekdays', '') === '*' &&
+            $this->xmlValue($job, 'command', '') === self::CRON_COMMAND;
+    }
+
+    private function readSchedulerCronStatus(): array
+    {
+        if (!is_readable(self::CONFIG_XML)) {
+            return [
+                'exists' => false,
+                'enabled' => false,
+                'correct' => false,
+                'message' => 'Не удалось прочитать ' . self::CONFIG_XML,
+            ];
+        }
+
+        libxml_use_internal_errors(true);
+        $xml = simplexml_load_file(self::CONFIG_XML);
+
+        if ($xml === false) {
+            $errors = [];
+            foreach (libxml_get_errors() as $error) {
+                $errors[] = trim($error->message);
+            }
+            libxml_clear_errors();
+
+            return [
+                'exists' => false,
+                'enabled' => false,
+                'correct' => false,
+                'message' => 'Ошибка чтения config.xml: ' . implode('; ', $errors),
+            ];
+        }
+
+        if (!isset($xml->OPNsense->cron->jobs->job)) {
+            return [
+                'exists' => false,
+                'enabled' => false,
+                'correct' => false,
+                'message' => 'Задание Additional Scheduler не найдено',
+            ];
+        }
+
+        foreach ($xml->OPNsense->cron->jobs->job as $job) {
+            if (!$this->cronJobMatches($job)) {
+                continue;
+            }
+
+            $enabled = $this->xmlValue($job, 'enabled', '0') === '1';
+            $correct = $this->isSchedulerCronCorrect($job);
+
+            return [
+                'exists' => true,
+                'enabled' => $enabled,
+                'correct' => $correct,
+                'uuid' => (string)($job['uuid'] ?? ''),
+                'description' => $this->xmlValue($job, 'description'),
+                'command' => $this->xmlValue($job, 'command'),
+                'parameters' => $this->xmlValue($job, 'parameters'),
+                'minutes' => $this->xmlValue($job, 'minutes', '*'),
+                'hours' => $this->xmlValue($job, 'hours', '*'),
+                'days' => $this->xmlValue($job, 'days', '*'),
+                'months' => $this->xmlValue($job, 'months', '*'),
+                'weekdays' => $this->xmlValue($job, 'weekdays', '*'),
+                'schedule' => $this->cronScheduleTextFromJob($job),
+                'message' => $enabled && $correct ? 'Задание Cron создано корректно' : 'Задание Cron найдено, но требует исправления',
+            ];
+        }
+
+        return [
+            'exists' => false,
+            'enabled' => false,
+            'correct' => false,
+            'message' => 'Задание Additional Scheduler не найдено',
+        ];
+    }
+
+    private function generateUuid(): string
+    {
+        $data = random_bytes(16);
+        $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
+        $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
+
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
+    }
+
+    private function setXmlChild($node, string $name, string $value): void
+    {
+        if (isset($node->{$name})) {
+            $node->{$name} = $value;
+        } else {
+            $node->addChild($name, htmlspecialchars($value, ENT_XML1 | ENT_COMPAT, 'UTF-8'));
+        }
+    }
+
+    private function saveConfigXml(\SimpleXMLElement $xml): void
+    {
+        $backup = self::CONFIG_XML . '.additional-scheduler-' . date('Ymd-His') . '.bak';
+
+        if (!copy(self::CONFIG_XML, $backup)) {
+            throw new \RuntimeException('Не удалось создать backup config.xml');
+        }
+
+        $data = $xml->asXML();
+
+        if ($data === false || $data === '') {
+            throw new \RuntimeException('Не удалось сформировать XML конфигурации');
+        }
+
+        if (file_put_contents(self::CONFIG_XML, $data, LOCK_EX) === false) {
+            throw new \RuntimeException('Не удалось записать ' . self::CONFIG_XML);
+        }
+
+        chmod(self::CONFIG_XML, 0600);
+    }
+
+    private function reloadCronService(): array
+    {
+        $template = $this->runCommand('/usr/local/sbin/configctl template reload OPNsense/Cron');
+        $restart = $this->runCommand('/usr/local/sbin/configctl cron restart');
+
+        return [
+            'template_reload' => $template,
+            'cron_restart' => $restart,
+        ];
+    }
+
+    private function createOrFixSchedulerCron(): array
+    {
+        if (!is_readable(self::CONFIG_XML) || !is_writable(self::CONFIG_XML)) {
+            throw new \RuntimeException('Нет прав на чтение/запись ' . self::CONFIG_XML);
+        }
+
+        libxml_use_internal_errors(true);
+        $xml = simplexml_load_file(self::CONFIG_XML);
+
+        if ($xml === false) {
+            $errors = [];
+            foreach (libxml_get_errors() as $error) {
+                $errors[] = trim($error->message);
+            }
+            libxml_clear_errors();
+
+            throw new \RuntimeException('Ошибка чтения config.xml: ' . implode('; ', $errors));
+        }
+
+        if (!isset($xml->OPNsense)) {
+            $opnsense = $xml->addChild('OPNsense');
+        } else {
+            $opnsense = $xml->OPNsense;
+        }
+
+        if (!isset($opnsense->cron)) {
+            $cron = $opnsense->addChild('cron');
+            $cron->addAttribute('version', '1.0.4');
+        } else {
+            $cron = $opnsense->cron;
+            if (!isset($cron['version'])) {
+                $cron->addAttribute('version', '1.0.4');
+            }
+        }
+
+        if (!isset($cron->jobs)) {
+            $jobs = $cron->addChild('jobs');
+        } else {
+            $jobs = $cron->jobs;
+        }
+
+        $targetJob = null;
+        foreach ($jobs->job as $job) {
+            if ($this->cronJobMatches($job)) {
+                $targetJob = $job;
+                break;
+            }
+        }
+
+        $created = false;
+
+        if ($targetJob === null) {
+            $targetJob = $jobs->addChild('job');
+            $targetJob->addAttribute('uuid', $this->generateUuid());
+            $created = true;
+        }
+
+        $this->setXmlChild($targetJob, 'origin', 'cron');
+        $this->setXmlChild($targetJob, 'enabled', '1');
+        $this->setXmlChild($targetJob, 'minutes', '*');
+        $this->setXmlChild($targetJob, 'hours', '*');
+        $this->setXmlChild($targetJob, 'days', '*');
+        $this->setXmlChild($targetJob, 'months', '*');
+        $this->setXmlChild($targetJob, 'weekdays', '*');
+        $this->setXmlChild($targetJob, 'who', 'root');
+        $this->setXmlChild($targetJob, 'command', self::CRON_COMMAND);
+        $this->setXmlChild($targetJob, 'parameters', '');
+        $this->setXmlChild($targetJob, 'description', self::CRON_DESCRIPTION);
+
+        $this->saveConfigXml($xml);
+        $reload = $this->reloadCronService();
+
+        return [
+            'created' => $created,
+            'reload' => $reload,
+            'cron' => $this->readSchedulerCronStatus(),
+        ];
+    }
+
     public function getAction()
     {
         $config = $this->loadConfig();
@@ -233,7 +477,37 @@ class SchedulerController extends ApiControllerBase
             'config' => $this->enrichConfig($config, $state),
             'state' => $state,
             'tasks' => $this->tasksDefinition(),
+            'cron' => $this->readSchedulerCronStatus(),
         ];
+    }
+
+
+    public function cronstatusAction()
+    {
+        return [
+            'status' => 'ok',
+            'cron' => $this->readSchedulerCronStatus(),
+        ];
+    }
+
+    public function createcronAction()
+    {
+        try {
+            $result = $this->createOrFixSchedulerCron();
+
+            return [
+                'status' => 'ok',
+                'message' => $result['created'] ? 'Задание Cron создано' : 'Задание Cron исправлено',
+                'cron' => $result['cron'],
+                'reload' => $result['reload'],
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'status' => 'error',
+                'message' => $e->getMessage(),
+                'cron' => $this->readSchedulerCronStatus(),
+            ];
+        }
     }
 
     public function statusAction()
@@ -258,6 +532,7 @@ class SchedulerController extends ApiControllerBase
                 'message' => 'Настройки Scheduler сохранены',
                 'config' => $this->enrichConfig($config, $state),
                 'state' => $state,
+                'cron' => $this->readSchedulerCronStatus(),
             ];
         } catch (\Throwable $e) {
             return [
@@ -316,6 +591,7 @@ class SchedulerController extends ApiControllerBase
                 'scheduler' => $decoded,
                 'config' => $this->enrichConfig($config, $state),
                 'state' => $state,
+                'cron' => $this->readSchedulerCronStatus(),
             ];
         } catch (\Throwable $e) {
             return [

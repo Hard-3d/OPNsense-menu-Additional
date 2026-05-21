@@ -227,12 +227,15 @@ $(document).ready(function() {
                     $("#btn_updater_update").prop("disabled", false);
 
                     if (data.status === "ok") {
-                        showMessage("success", data.message || "Обновление выполнено. Выполните Logout → Login.");
+                        showMessage("success", (data.message || "Обновление выполнено") + ". Страница обновится через 5 секунд.");
+                        renderUpdateState(data.updater || {});
+                        setTimeout(function() {
+                            window.location.reload();
+                        }, 5000);
                     } else {
                         showMessage("danger", data.message || "Ошибка обновления");
+                        renderUpdateState(data.updater || {});
                     }
-
-                    renderUpdateState(data.updater || {});
                 });
             }
         );
