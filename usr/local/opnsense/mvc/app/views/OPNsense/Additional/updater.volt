@@ -25,7 +25,8 @@
 
     .updater-input-wide {
         width: 820px !important;
-        max-width: 100%;
+        min-width: 620px !important;
+        max-width: 100% !important;
         display: block;
         font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
     }
@@ -256,6 +257,7 @@ $(document).ready(function() {
             <input type="text"
                    id="updater_repo_url"
                    class="form-control updater-input-wide"
+                   style="width: 820px !important; max-width: 100%;"
                    spellcheck="false"
                    placeholder="https://github.com/OWNER/REPO">
         </div>
@@ -265,6 +267,7 @@ $(document).ready(function() {
             <input type="text"
                    id="updater_asset_name"
                    class="form-control updater-input-wide"
+                   style="width: 820px !important; max-width: 100%;"
                    spellcheck="false"
                    placeholder="Например: opnsense-additional-full-menu-root.zip. Можно оставить пустым для source zip.">
         </div>
