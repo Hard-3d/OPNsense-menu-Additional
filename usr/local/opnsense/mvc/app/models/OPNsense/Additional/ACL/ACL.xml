@@ -1,0 +1,46 @@
+<acl>
+    <page-additional-ethname>
+        <name>WebCfg - Additional: Ethname</name>
+        <description>Allow access to Ethname editor</description>
+        <patterns>
+            <pattern>ui/additional/index/ethname</pattern>
+            <pattern>api/additional/ethname/*</pattern>
+        </patterns>
+    </page-additional-ethname>
+    <page-additional-geoipupdate>
+        <name>WebCfg - Additional: GeoIP update</name>
+        <description>Allow access to Additional GeoIP update</description>
+        <patterns>
+            <pattern>ui/additional/index/geoipupdate</pattern>
+            <pattern>api/additional/geoip/*</pattern>
+            <pattern>api/firewall/alias/get_geo_ip</pattern>
+            <pattern>api/cron/settings/search_jobs</pattern>
+        </patterns>
+    </page-additional-geoipupdate>
+    <page-additional-checkstatus>
+        <name>WebCfg - Additional: Check VPN status</name>
+        <description>Allow access to Additional Check VPN status</description>
+        <patterns>
+            <pattern>ui/additional/index/checkstatus</pattern>
+            <pattern>api/additional/checkstatus/*</pattern>
+            <pattern>api/cron/settings/search_jobs</pattern>
+        </patterns>
+    </page-additional-checkstatus>
+    <page-additional-checkwan>
+        <name>WebCfg - Additional: Check WAN</name>
+        <description>Allow access to Additional Check WAN</description>
+        <patterns>
+            <pattern>ui/additional/index/checkwan</pattern>
+            <pattern>api/additional/checkwan/*</pattern>
+            <pattern>api/cron/settings/search_jobs</pattern>
+        </patterns>
+    </page-additional-checkwan>
+    <page-additional-updater>
+        <name>WebCfg - Additional: Update</name>
+        <description>Allow access to Additional update manager</description>
+        <patterns>
+            <pattern>ui/additional/index/updater</pattern>
+            <pattern>api/additional/updater/*</pattern>
+        </patterns>
+    </page-additional-updater>
+</acl>
