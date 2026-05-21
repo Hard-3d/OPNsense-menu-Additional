@@ -3,11 +3,10 @@
 
 declare(strict_types=1);
 
-require_once '/usr/local/opnsense/scripts/additional/lib.php';
-
 const SCRIPT_NAME = 'additional-check-wg-status';
 const VARIABLES_FILE = '/usr/local/opnsense/scripts/variables';
 const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/check_status.json';
+const OPN_CONFIG_FILE = '/conf/config.xml';
 const STATUS_FILE = '/var/run/additional_check_status_wireguard.json';
 const LOCK_FILE = '/tmp/additional_check_wg_status.lock';
 
@@ -22,6 +21,7 @@ function write_status(array $data): void
 {
     $data['timestamp'] = date('Y-m-d H:i:s');
     $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
     if ($json !== false) {
         @file_put_contents(STATUS_FILE, $json . "\n", LOCK_EX);
         @chmod(STATUS_FILE, 0644);
@@ -44,32 +44,285 @@ function load_json_config(): array
     return $data;
 }
 
+function load_bash_vars(string $path): array
+{
+    $result = [];
+
+    if (!is_readable($path)) {
+        return $result;
+    }
+
+    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        $line = trim((string)$line);
+
+        if ($line === '' || $line[0] === '#') {
+            continue;
+        }
+
+        if (!preg_match('/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/', $line, $m)) {
+            continue;
+        }
+
+        $value = trim($m[2]);
+        $value = preg_replace('/^export\s+/', '', $value);
+        $value = trim((string)$value);
+
+        if (
+            (str_starts_with($value, '"') && str_ends_with($value, '"')) ||
+            (str_starts_with($value, "'") && str_ends_with($value, "'"))
+        ) {
+            $value = substr($value, 1, -1);
+        }
+
+        $result[$m[1]] = $value;
+    }
+
+    return $result;
+}
+
 function split_ip_list(string $value): array
 {
     $result = [];
+
     foreach (preg_split('/[,\s]+/', $value) as $ip) {
-        $ip = trim($ip);
+        $ip = trim((string)$ip);
+
         if ($ip !== '' && filter_var($ip, FILTER_VALIDATE_IP)) {
             $result[] = $ip;
         }
     }
+
     return array_values(array_unique($result));
+}
+
+function xml_value(SimpleXMLElement $node, string $name, string $default = ''): string
+{
+    if (!isset($node->{$name})) {
+        return $default;
+    }
+
+    return trim((string)$node->{$name});
+}
+
+function xml_bool_enabled(SimpleXMLElement $node): bool
+{
+    /*
+     * Если enabled отсутствует, считаем запись активной.
+     * В разных версиях OPNsense модель WireGuard может отличаться,
+     * но tunneladdress у активного клиента нам всё равно нужен.
+     */
+    if (!isset($node->enabled)) {
+        return true;
+    }
+
+    $value = strtolower(trim((string)$node->enabled));
+
+    return in_array($value, ['1', 'true', 'yes', 'on'], true);
+}
+
+function collect_wireguard_clients_recursive(SimpleXMLElement $node, array &$clients): void
+{
+    if (isset($node->tunneladdress)) {
+        $clients[] = [
+            'enabled' => xml_bool_enabled($node),
+            'name' => xml_value($node, 'name', xml_value($node, 'description', '')),
+            'tunneladdress' => xml_value($node, 'tunneladdress'),
+        ];
+    }
+
+    foreach ($node->children() as $child) {
+        collect_wireguard_clients_recursive($child, $clients);
+    }
+}
+
+function load_wireguard_clients_from_config(): array
+{
+    if (!is_readable(OPN_CONFIG_FILE)) {
+        throw new RuntimeException('Не удалось прочитать ' . OPN_CONFIG_FILE);
+    }
+
+    libxml_use_internal_errors(true);
+    $xml = simplexml_load_file(OPN_CONFIG_FILE);
+
+    if ($xml === false) {
+        $errors = [];
+
+        foreach (libxml_get_errors() as $error) {
+            $errors[] = trim($error->message);
+        }
+
+        libxml_clear_errors();
+
+        throw new RuntimeException('Ошибка чтения config.xml: ' . implode('; ', $errors));
+    }
+
+    $clients = [];
+
+    if (isset($xml->OPNsense)) {
+        collect_wireguard_clients_recursive($xml->OPNsense, $clients);
+    } else {
+        collect_wireguard_clients_recursive($xml, $clients);
+    }
+
+    return $clients;
+}
+
+function collect_current_routes(): array
+{
+    $routes = [];
+
+    $commands = [
+        '/usr/bin/netstat -rn -f inet',
+        '/usr/bin/netstat -rn -f inet6',
+    ];
+
+    foreach ($commands as $command) {
+        $output = [];
+        $exitCode = 0;
+
+        exec($command . ' 2>/dev/null', $output, $exitCode);
+
+        if ($exitCode !== 0) {
+            continue;
+        }
+
+        foreach ($output as $line) {
+            $line = trim((string)$line);
+
+            if ($line === '' || preg_match('/^(Routing|Internet|Destination|Expire|Netif)/i', $line)) {
+                continue;
+            }
+
+            $parts = preg_split('/\s+/', $line);
+
+            if ($parts === false || empty($parts[0])) {
+                continue;
+            }
+
+            $destination = trim((string)$parts[0]);
+
+            if ($destination === '' || $destination === 'default') {
+                continue;
+            }
+
+            $routes[] = $destination;
+        }
+    }
+
+    return array_values(array_unique($routes));
+}
+
+function route_destination_matches(string $expected, array $routes): bool
+{
+    if (in_array($expected, $routes, true)) {
+        return true;
+    }
+
+    /*
+     * netstat в FreeBSD иногда выводит сеть без CIDR для некоторых маршрутов.
+     * Поэтому дополнительно сравниваем IP-часть до slash.
+     */
+    $expectedBase = preg_replace('#/\d+$#', '', $expected);
+
+    foreach ($routes as $route) {
+        if ($route === $expectedBase) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function ping_host(string $ip): bool
+{
+    $binary = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? '/sbin/ping6' : '/sbin/ping';
+
+    if (!is_executable($binary)) {
+        $binary = '/sbin/ping';
+    }
+
+    $cmd = sprintf('%s -c 1 -W 1 %s >/dev/null 2>&1', escapeshellcmd($binary), escapeshellarg($ip));
+    $output = [];
+    $exitCode = 0;
+
+    exec($cmd, $output, $exitCode);
+
+    return $exitCode === 0;
+}
+
+function run_command(string $command): array
+{
+    $output = [];
+    $exitCode = 0;
+
+    exec($command . ' 2>&1', $output, $exitCode);
+
+    return [
+        'exit_code' => $exitCode,
+        'output' => trim(implode("\n", $output)),
+    ];
+}
+
+function restart_wireguard(): array
+{
+    /*
+     * Без API key/secret. Пробуем локальные способы, которые доступны root.
+     * На разных версиях OPNsense action может отличаться, поэтому список
+     * сделан каскадным.
+     */
+    $commands = [
+        '/usr/local/sbin/configctl wireguard restart',
+        '/usr/local/sbin/configctl wireguard reconfigure',
+        '/usr/local/etc/rc.d/wireguard restart',
+        '/usr/sbin/service wireguard restart',
+    ];
+
+    $attempts = [];
+
+    foreach ($commands as $command) {
+        $binary = preg_split('/\s+/', $command)[0] ?? '';
+
+        if ($binary === '' || !is_executable($binary)) {
+            $attempts[] = [
+                'command' => $command,
+                'exit_code' => 127,
+                'output' => 'binary not executable',
+            ];
+            continue;
+        }
+
+        $result = run_command($command);
+        $result['command'] = $command;
+        $attempts[] = $result;
+
+        if ((int)$result['exit_code'] === 0) {
+            return [
+                'ok' => true,
+                'command' => $command,
+                'attempts' => $attempts,
+            ];
+        }
+    }
+
+    return [
+        'ok' => false,
+        'command' => '',
+        'attempts' => $attempts,
+    ];
 }
 
 $silent = in_array('--silent', $argv, true) || in_array('-s', $argv, true);
 
 $lockHandle = fopen(LOCK_FILE, 'c');
+
 if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
     out_msg('Скрипт уже выполняется. Выход.', $silent);
     exit(0);
 }
 
 try {
-    $vars = additional_load_bash_vars(VARIABLES_FILE);
+    $vars = load_bash_vars(VARIABLES_FILE);
     $config = load_json_config();
-
-    $api = additional_load_opnsense_api_config('/conf/config.xml', 'root');
-    $client = new AdditionalApiClient($api['protocol'], '127.0.0.1', $api['key'], $api['secret']);
 
     $watchNetworks = [];
     $watchHosts = [];
@@ -82,12 +335,11 @@ try {
         $watchHosts = array_merge($watchHosts, split_ip_list((string)$config['wireguard_check_ping']));
     }
 
-    out_msg('Получаю список WireGuard клиентов', $silent);
-    $response = $client->request('POST', 'wireguard/client/searchClient', []);
-    $clients = $response['rows'] ?? [];
+    out_msg('Получаю список WireGuard клиентов из /conf/config.xml', $silent);
+    $clients = load_wireguard_clients_from_config();
 
     foreach ($clients as $wg) {
-        if ((int)($wg['enabled'] ?? 0) !== 1) {
+        if (empty($wg['enabled'])) {
             continue;
         }
 
@@ -127,28 +379,27 @@ try {
             'watch_networks' => [],
             'watch_hosts' => [],
             'missing_networks' => [],
-            'unreachable_hosts' => []
+            'unreachable_hosts' => [],
+            'source' => 'config.xml'
         ]);
         exit(0);
     }
 
     out_msg('Проверяю маршруты и ping', $silent);
-    $routes = $client->request('GET', 'diagnostics/interface/getRoutes/?resolve=');
+    $currentRoutes = collect_current_routes();
 
-    $currentRoutes = [];
-    foreach ($routes as $r) {
-        if (!empty($r['destination'])) {
-            $currentRoutes[] = trim((string)$r['destination']);
+    $missingNetworks = [];
+
+    foreach ($watchNetworks as $network) {
+        if (!route_destination_matches($network, $currentRoutes)) {
+            $missingNetworks[] = $network;
         }
     }
 
-    $missingNetworks = array_values(array_diff($watchNetworks, $currentRoutes));
     $unreachableHosts = [];
 
     foreach ($watchHosts as $ip) {
-        $cmd = sprintf('/sbin/ping -c 1 -W 1 %s >/dev/null 2>&1', escapeshellarg($ip));
-        exec($cmd, $out, $rc);
-        if ($rc !== 0) {
+        if (!ping_host($ip)) {
             $unreachableHosts[] = $ip;
         }
     }
@@ -164,20 +415,31 @@ try {
             out_msg('Хосты не пингуются: ' . implode(', ', $unreachableHosts), $silent);
         }
 
-        additional_restart_wireguard($client);
-        out_msg('WireGuard перезапущен', $silent);
+        $restart = restart_wireguard();
+
+        if ($restart['ok']) {
+            out_msg('WireGuard перезапущен: ' . $restart['command'], $silent);
+            $message = 'WireGuard деградация, выполнен перезапуск';
+            $state = 'degraded_restarted';
+        } else {
+            out_msg('Не удалось перезапустить WireGuard', $silent);
+            $message = 'WireGuard деградация, перезапуск не выполнен';
+            $state = 'degraded_restart_failed';
+        }
 
         write_status([
             'ok' => false,
-            'state' => 'degraded_restarted',
-            'message' => 'WireGuard деградация, выполнен перезапуск',
+            'state' => $state,
+            'message' => $message,
             'watch_networks' => $watchNetworks,
             'watch_hosts' => $watchHosts,
             'missing_networks' => $missingNetworks,
-            'unreachable_hosts' => $unreachableHosts
+            'unreachable_hosts' => $unreachableHosts,
+            'restart' => $restart,
+            'source' => 'config.xml'
         ]);
 
-        exit(1);
+        exit($restart['ok'] ? 1 : 2);
     }
 
     out_msg('WireGuard OK', $silent);
@@ -188,7 +450,8 @@ try {
         'watch_networks' => $watchNetworks,
         'watch_hosts' => $watchHosts,
         'missing_networks' => [],
-        'unreachable_hosts' => []
+        'unreachable_hosts' => [],
+        'source' => 'config.xml'
     ]);
 
     exit(0);
@@ -202,7 +465,8 @@ try {
         'watch_networks' => [],
         'watch_hosts' => [],
         'missing_networks' => [],
-        'unreachable_hosts' => []
+        'unreachable_hosts' => [],
+        'source' => 'config.xml'
     ]);
     exit(2);
 }
