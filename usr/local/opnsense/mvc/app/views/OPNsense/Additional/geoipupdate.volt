@@ -539,29 +539,14 @@ $(document).ready(function() {
     function loadCronStatus() {
         $("#geoip_cron_status").html('<span class="label label-info">Проверка...</span>');
 
-        ajaxCall("/api/cron/settings/search_jobs", {
-            current: 1,
-            rowCount: -1,
-            sort: {}
-        }, function(data, status) {
-            var rows = [];
-            var foundRows = [];
-            var enabledRows = [];
+        ajaxCall("/api/additional/scheduler/status", {}, function(data, status) {
+            var task = (((data || {}).config || {}).tasks || {}).geoip_update || {};
 
-            if (data && $.isArray(data.rows)) {
-                rows = data.rows;
+            if (task.enabled === "1") {
+                $("#geoip_cron_status").html('<span class="label label-success">Включено — ' + (task.schedule_text || "-") + '</span>');
+            } else {
+                $("#geoip_cron_status").html('<span class="label label-default">Отключено</span>');
             }
-
-            rows.forEach(function(row) {
-                if (rowMatchesGeoIpCron(row)) {
-                    foundRows.push(row);
-                    if (cronRowIsEnabled(row)) {
-                        enabledRows.push(row);
-                    }
-                }
-            });
-
-            renderCronStatus(foundRows, enabledRows);
         });
     }
 
@@ -674,7 +659,7 @@ $(document).ready(function() {
                     <td id="geoip_file_count">-</td>
                 </tr>
                 <tr>
-                    <th>Задание Cron</th>
+                    <th>Задание Scheduler</th>
                     <td id="geoip_cron_status">-</td>
                 </tr>
             </table>

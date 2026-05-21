@@ -4,6 +4,7 @@
         <GeoIPUpdate order="20" VisibleName="GeoIP update" url="/ui/additional/index/geoipupdate"/>
         <CheckStatus order="30" VisibleName="Check VPN status" url="/ui/additional/index/checkstatus"/>
         <CheckWAN order="40" VisibleName="Check WAN" url="/ui/additional/index/checkwan"/>
-        <Updater order="50" VisibleName="Update" url="/ui/additional/index/updater"/>
+        <Scheduler order="50" VisibleName="Scheduler" url="/ui/additional/index/scheduler"/>
+        <Updater order="60" VisibleName="Update" url="/ui/additional/index/updater"/>
     </Additional>
 </menu>

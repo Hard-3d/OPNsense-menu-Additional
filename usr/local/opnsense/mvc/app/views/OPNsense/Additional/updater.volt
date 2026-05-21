@@ -61,6 +61,19 @@ $(document).ready(function() {
         $("#updater_message").hide();
     }
 
+
+    function loadUpdaterSchedulerStatus() {
+        ajaxCall("/api/additional/scheduler/status", {}, function(data, status) {
+            var task = (((data || {}).config || {}).tasks || {}).update_check || {};
+
+            if (task.enabled === "1") {
+                $("#updater_scheduler_status").html('<span class="label label-success">Включено — ' + (task.schedule_text || "-") + '</span>');
+            } else {
+                $("#updater_scheduler_status").html('<span class="label label-default">Отключено</span>');
+            }
+        });
+    }
+
     function showConfirmModal(title, message, confirmText, onConfirm) {
         var modalId = "additional_confirm_modal";
         var styleId = "additional_confirm_modal_styles";
@@ -161,6 +174,7 @@ $(document).ready(function() {
                 $("#updater_repo_url").val(config.repo_url || "");
                 $("#updater_asset_name").val(config.asset_name || "");
                 renderUpdateState(data.updater || { current_version: data.current_version });
+                loadUpdaterSchedulerStatus();
             } else {
                 showMessage("danger", data.message || "Ошибка загрузки Update");
             }
@@ -291,6 +305,10 @@ $(document).ready(function() {
             <tr>
                 <th>Последняя проверка</th>
                 <td id="updater_last_check">-</td>
+            </tr>
+            <tr>
+                <th>Задание Scheduler</th>
+                <td id="updater_scheduler_status">-</td>
             </tr>
             <tr>
                 <th>Release tag</th>

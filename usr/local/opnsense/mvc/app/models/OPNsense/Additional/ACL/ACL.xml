@@ -15,6 +15,7 @@
             <pattern>api/additional/geoip/*</pattern>
             <pattern>api/firewall/alias/get_geo_ip</pattern>
             <pattern>api/cron/settings/search_jobs</pattern>
+                    <pattern>api/additional/scheduler/*</pattern>
         </patterns>
     </page-additional-geoipupdate>
     <page-additional-checkstatus>
@@ -24,6 +25,7 @@
             <pattern>ui/additional/index/checkstatus</pattern>
             <pattern>api/additional/checkstatus/*</pattern>
             <pattern>api/cron/settings/search_jobs</pattern>
+                    <pattern>api/additional/scheduler/*</pattern>
         </patterns>
     </page-additional-checkstatus>
     <page-additional-checkwan>
@@ -33,14 +35,25 @@
             <pattern>ui/additional/index/checkwan</pattern>
             <pattern>api/additional/checkwan/*</pattern>
             <pattern>api/cron/settings/search_jobs</pattern>
+                    <pattern>api/additional/scheduler/*</pattern>
         </patterns>
     </page-additional-checkwan>
+    <page-additional-scheduler>
+        <name>WebCfg - Additional: Scheduler</name>
+        <description>Allow access to Additional Scheduler</description>
+        <patterns>
+            <pattern>ui/additional/index/scheduler</pattern>
+            <pattern>api/additional/scheduler/*</pattern>
+            <pattern>api/cron/settings/search_jobs</pattern>
+        </patterns>
+    </page-additional-scheduler>
     <page-additional-updater>
         <name>WebCfg - Additional: Update</name>
         <description>Allow access to Additional update manager</description>
         <patterns>
             <pattern>ui/additional/index/updater</pattern>
             <pattern>api/additional/updater/*</pattern>
+                    <pattern>api/additional/scheduler/*</pattern>
         </patterns>
     </page-additional-updater>
 </acl>

@@ -392,30 +392,20 @@ $(document).ready(function() {
     }
 
     function loadCronStatus() {
-        ajaxCall("/api/cron/settings/search_jobs", {
-            current: 1,
-            rowCount: -1,
-            sort: {}
-        }, function(data, status) {
-            var rows = [];
-            if (data && data.rows) {
-                rows = data.rows;
-            }
+        ajaxCall("/api/additional/scheduler/status", {}, function(data, status) {
+            var tasks = (((data || {}).config || {}).tasks || {});
 
-            var wgFound = null;
-            var tsFound = null;
-
-            for (var i = 0; i < rows.length; i++) {
-                if (wgFound === null && rowContainsWireGuardJob(rows[i])) {
-                    wgFound = rows[i];
-                }
-                if (tsFound === null && rowContainsTailscaleJob(rows[i])) {
-                    tsFound = rows[i];
+            function render(selector, taskId) {
+                var task = tasks[taskId] || {};
+                if (task.enabled === "1") {
+                    $(selector).html('<span class="label label-success">Включено — ' + (task.schedule_text || "-") + '</span>');
+                } else {
+                    $(selector).html('<span class="label label-default">Отключено</span>');
                 }
             }
 
-            renderCronStatus("#wg_cron_status", wgFound);
-            renderCronStatus("#ts_cron_status", tsFound);
+            render("#wg_cron_status", "wireguard_check");
+            render("#ts_cron_status", "tailscale_check");
         });
     }
 
@@ -571,7 +561,7 @@ $(document).ready(function() {
                         <td id="wg_last_check">-</td>
                     </tr>
                     <tr>
-                        <th>Задание Cron</th>
+                        <th>Задание Scheduler</th>
                         <td id="wg_cron_status">-</td>
                     </tr>
                     <tr>
@@ -636,7 +626,7 @@ $(document).ready(function() {
                         <td id="ts_last_check">-</td>
                     </tr>
                     <tr>
-                        <th>Задание Cron</th>
+                        <th>Задание Scheduler</th>
                         <td id="ts_cron_status">-</td>
                     </tr>
                     <tr>

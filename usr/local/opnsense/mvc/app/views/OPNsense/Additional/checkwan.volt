@@ -328,25 +328,14 @@ $(document).ready(function() {
     }
 
     function loadCronStatus() {
-        ajaxCall("/api/cron/settings/search_jobs", {
-            current: 1,
-            rowCount: -1,
-            sort: {}
-        }, function(data, status) {
-            var rows = [];
-            if (data && data.rows) {
-                rows = data.rows;
-            }
+        ajaxCall("/api/additional/scheduler/status", {}, function(data, status) {
+            var task = (((data || {}).config || {}).tasks || {}).check_wan || {};
 
-            var found = null;
-            for (var i = 0; i < rows.length; i++) {
-                if (rowContainsCheckWanJob(rows[i])) {
-                    found = rows[i];
-                    break;
-                }
+            if (task.enabled === "1") {
+                $("#wan_cron_status").html('<span class="label label-success">Включено — ' + (task.schedule_text || "-") + '</span>');
+            } else {
+                $("#wan_cron_status").html('<span class="label label-default">Отключено</span>');
             }
-
-            renderCronStatus(found);
         });
     }
 
@@ -617,7 +606,7 @@ $(document).ready(function() {
                         <td id="wan_last_check">-</td>
                     </tr>
                     <tr>
-                        <th>Задание Cron</th>
+                        <th>Задание Scheduler</th>
                         <td id="wan_cron_status">-</td>
                     </tr>
                     <tr>

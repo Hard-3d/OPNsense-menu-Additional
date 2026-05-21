@@ -8,6 +8,7 @@
 - **GeoIP update** — обновление GeoIP alias-баз из GitHub release/download URL.
 - **Check VPN status** — проверка WireGuard и Tailscale, статус Cron.
 - **Check WAN** — контроль потерь WAN gateway и переключение priority.
+- **Scheduler** — единый планировщик для всех задач меню через один OPNsense Cron.
 - **Update** — проверка и установка новых версий этого меню из GitHub Releases.
 
 ## Установка
@@ -16,7 +17,7 @@
 
 ```sh
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.2-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.3-root.zip
 chmod 755 /install.sh
 /install.sh
 ```
@@ -43,14 +44,14 @@ usr/local/opnsense/...
 
 Пример:
 
-- tag: `v0.1.2`
-- asset: `opnsense-additional-menu-v0.1.2-root.zip`
+- tag: `v0.1.3`
+- asset: `opnsense-additional-menu-v0.1.3-root.zip`
 
 В самой странице **Update** укажите:
 
 ```text
 Repository URL: https://github.com/OWNER/REPO
-Release asset name: opnsense-additional-menu-v0.1.2-root.zip
+Release asset name: opnsense-additional-menu-v0.1.3-root.zip
 ```
 
 Если поле **Release asset name** оставить пустым, updater попробует установить GitHub source ZIP latest release. Это тоже поддерживается, если в корне репозитория есть `install.sh`.
@@ -66,6 +67,6 @@ Release asset name: opnsense-additional-menu-v0.1.2-root.zip
 Для новой версии:
 
 1. Измените файл `usr/local/opnsense/scripts/additional/VERSION`.
-2. Создайте новый git tag, например `v0.1.2`.
+2. Создайте новый git tag, например `v0.1.3`.
 3. Соберите новый root ZIP.
 4. Загрузите ZIP в GitHub Release.
