@@ -141,11 +141,86 @@ function parse_github_repo(string $repoUrl): array
 
 function http_get(string $url): string
 {
+    $errors = [];
+
+    /*
+     * На некоторых установках OPNsense PHP может не иметь корректно
+     * работающего HTTPS stream wrapper / allow_url_fopen для GitHub API.
+     * Поэтому сначала используем curl, затем fetch, и только потом
+     * file_get_contents как fallback.
+     */
+    $curl = '/usr/local/bin/curl';
+
+    if (is_executable($curl)) {
+        $tmp = tempnam(sys_get_temp_dir(), 'additional_updater_api_');
+
+        if ($tmp !== false) {
+            $cmd = sprintf(
+                '%s -LfsS --retry 2 --connect-timeout 20 --max-time 60 ' .
+                '-A %s -H %s -o %s %s',
+                escapeshellcmd($curl),
+                escapeshellarg('OPNsense-Additional-Updater'),
+                escapeshellarg('Accept: application/vnd.github+json, application/json'),
+                escapeshellarg($tmp),
+                escapeshellarg($url)
+            );
+
+            $result = run_command($cmd);
+
+            if ($result['exit_code'] === 0 && is_readable($tmp) && filesize($tmp) > 0) {
+                $data = file_get_contents($tmp);
+                @unlink($tmp);
+
+                if ($data !== false && $data !== '') {
+                    return $data;
+                }
+            } else {
+                $errors[] = 'curl: ' . ($result['output'] !== '' ? $result['output'] : 'empty response');
+            }
+
+            @unlink($tmp);
+        }
+    } else {
+        $errors[] = 'curl не найден';
+    }
+
+    $fetch = '/usr/bin/fetch';
+
+    if (is_executable($fetch)) {
+        $tmp = tempnam(sys_get_temp_dir(), 'additional_updater_api_');
+
+        if ($tmp !== false) {
+            $cmd = sprintf(
+                '%s -q -T 60 -o %s %s',
+                escapeshellcmd($fetch),
+                escapeshellarg($tmp),
+                escapeshellarg($url)
+            );
+
+            $result = run_command($cmd);
+
+            if ($result['exit_code'] === 0 && is_readable($tmp) && filesize($tmp) > 0) {
+                $data = file_get_contents($tmp);
+                @unlink($tmp);
+
+                if ($data !== false && $data !== '') {
+                    return $data;
+                }
+            } else {
+                $errors[] = 'fetch: ' . ($result['output'] !== '' ? $result['output'] : 'empty response');
+            }
+
+            @unlink($tmp);
+        }
+    } else {
+        $errors[] = 'fetch не найден';
+    }
+
     $context = stream_context_create([
         'http' => [
             'method' => 'GET',
             'header' => "User-Agent: OPNsense-Additional-Updater\r\nAccept: application/vnd.github+json, application/json\r\n",
-            'timeout' => 30,
+            'timeout' => 60,
             'ignore_errors' => true,
         ],
         'ssl' => [
@@ -156,11 +231,41 @@ function http_get(string $url): string
 
     $data = @file_get_contents($url, false, $context);
 
-    if ($data === false || $data === '') {
-        throw new RuntimeException('Не удалось получить данные: ' . $url);
+    if ($data !== false && $data !== '') {
+        return $data;
     }
 
-    return $data;
+    $errors[] = 'php file_get_contents: empty/false response';
+
+    throw new RuntimeException(
+        'Не удалось получить данные: ' . $url . '. Details: ' . implode(' | ', $errors)
+    );
+}
+
+function normalize_version_tag(string $version): string
+{
+    $version = trim($version);
+    $version = preg_replace('/^v/i', '', $version);
+    return $version;
+}
+
+function is_latest_newer(string $latest, string $current): bool
+{
+    if ($current === '' || $current === 'unknown') {
+        return true;
+    }
+
+    $latestNorm = normalize_version_tag($latest);
+    $currentNorm = normalize_version_tag($current);
+
+    if (
+        preg_match('/^\d+(?:\.\d+){0,3}(?:[-+][A-Za-z0-9_.-]+)?$/', $latestNorm) &&
+        preg_match('/^\d+(?:\.\d+){0,3}(?:[-+][A-Za-z0-9_.-]+)?$/', $currentNorm)
+    ) {
+        return version_compare($latestNorm, $currentNorm, '>');
+    }
+
+    return $latest !== $current;
 }
 
 function latest_release_info(array $config): array
@@ -223,15 +328,17 @@ function latest_release_info(array $config): array
     $current = current_version();
     $latest = (string)$data['tag_name'];
 
+    $updateAvailable = is_latest_newer($latest, $current);
+
     return [
         'status' => 'ok',
         'ok' => true,
-        'message' => $current === $latest ? 'Установлена актуальная версия' : 'Доступна новая версия',
+        'message' => $updateAvailable ? 'Доступна новая версия' : 'Установлена актуальная версия',
         'repo_url' => $repo['url'],
         'asset_name' => $assetName,
         'current_version' => $current,
         'latest_version' => $latest,
-        'update_available' => $current !== $latest,
+        'update_available' => $updateAvailable,
         'published_at' => (string)($data['published_at'] ?? ''),
         'release_url' => (string)($data['html_url'] ?? ''),
         'download_url' => $downloadUrl,
