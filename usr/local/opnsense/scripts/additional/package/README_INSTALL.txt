@@ -28,5 +28,3 @@ Logout -> Login
 ## Root cleanup
 
 После установки служебные файлы `install.sh`, `README.md`, `README_INSTALL.txt`, `.gitignore` удаляются из корня `/` и сохраняются в `/usr/local/opnsense/scripts/additional/package/`.
-
-После выполнения install.sh служебные файлы будут перенесены в `/usr/local/opnsense/scripts/additional/package/` и удалены из корня `/`.
