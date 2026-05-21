@@ -1,8 +1,8 @@
-OPNsense Additional Menu v0.1.4
+OPNsense Additional Menu v0.1.5
 
 Установка:
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.4-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.5-root.zip
 chmod 755 /install.sh
 /install.sh
 
@@ -21,5 +21,5 @@ Logout -> Login
 Для GitHub:
 - распакуйте архив в локальную папку репозитория;
 - сделайте git add/commit/push;
-- создайте Release v0.1.4;
+- создайте Release v0.1.5;
 - загрузите этот же root ZIP как release asset.

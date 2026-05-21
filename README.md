@@ -17,7 +17,7 @@
 
 ```sh
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.4-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.5-root.zip
 chmod 755 /install.sh
 /install.sh
 ```
@@ -44,14 +44,14 @@ usr/local/opnsense/...
 
 Пример:
 
-- tag: `v0.1.4`
-- asset: `opnsense-additional-menu-v0.1.4-root.zip`
+- tag: `v0.1.5`
+- asset: `opnsense-additional-menu-v0.1.5-root.zip`
 
 В самой странице **Update** укажите:
 
 ```text
 Repository URL: https://github.com/OWNER/REPO
-Release asset name: opnsense-additional-menu-v0.1.4-root.zip
+Release asset name: opnsense-additional-menu-v0.1.5-root.zip
 ```
 
 Если поле **Release asset name** оставить пустым, updater попробует установить GitHub source ZIP latest release. Это тоже поддерживается, если в корне репозитория есть `install.sh`.
@@ -67,7 +67,7 @@ Release asset name: opnsense-additional-menu-v0.1.4-root.zip
 Для новой версии:
 
 1. Измените файл `usr/local/opnsense/scripts/additional/VERSION`.
-2. Создайте новый git tag, например `v0.1.4`.
+2. Создайте новый git tag, например `v0.1.5`.
 3. Соберите новый root ZIP.
 4. Загрузите ZIP в GitHub Release.
 

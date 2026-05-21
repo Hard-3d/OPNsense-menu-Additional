@@ -316,22 +316,6 @@ $(document).ready(function() {
             </tr>
         </table>
 
-        <br>
-
-        <button id="btn_scheduler_save" type="button" class="btn btn-default">
-            <i class="fa fa-save"></i>
-            Сохранить настройки
-        </button>
-
-        <button id="btn_scheduler_run" type="button" class="btn btn-primary">
-            <i class="fa fa-refresh"></i>
-            Запустить Scheduler сейчас
-        </button>
-
-        <button id="btn_scheduler_refresh" type="button" class="btn btn-default">
-            <i class="fa fa-info-circle"></i>
-            Обновить информацию
-        </button>
     </div>
 
     <div class="scheduler-section">
@@ -355,5 +339,22 @@ $(document).ready(function() {
             </thead>
             <tbody></tbody>
         </table>
+
+        <div class="scheduler-actions" style="margin-top: 18px;">
+            <button id="btn_scheduler_save" type="button" class="btn btn-default">
+                <i class="fa fa-save"></i>
+                Сохранить настройки
+            </button>
+
+            <button id="btn_scheduler_run" type="button" class="btn btn-primary">
+                <i class="fa fa-refresh"></i>
+                Запустить Scheduler сейчас
+            </button>
+
+            <button id="btn_scheduler_refresh" type="button" class="btn btn-default">
+                <i class="fa fa-info-circle"></i>
+                Обновить информацию
+            </button>
+        </div>
     </div>
 </div>
