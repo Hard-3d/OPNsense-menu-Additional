@@ -268,6 +268,43 @@ function is_latest_newer(string $latest, string $current): bool
     return $latest !== $current;
 }
 
+
+function looks_like_version_tag(string $value): bool
+{
+    $value = trim($value);
+    return preg_match('/^v?\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9_.-]+)?$/', $value) === 1;
+}
+
+function release_version_from_github(array $data): string
+{
+    $tag = trim((string)($data['tag_name'] ?? ''));
+    $name = trim((string)($data['name'] ?? ''));
+
+    /*
+     * GitHub позволяет назвать tag как угодно, например "Beta",
+     * а версию указать в имени release: "v0.1.2".
+     * Для сравнения версий используем нормальный semver-подобный release name,
+     * если tag не похож на версию.
+     */
+    if (looks_like_version_tag($tag)) {
+        return $tag;
+    }
+
+    if (looks_like_version_tag($name)) {
+        return $name;
+    }
+
+    if ($tag !== '') {
+        return $tag;
+    }
+
+    if ($name !== '') {
+        return $name;
+    }
+
+    return 'unknown';
+}
+
 function latest_release_info(array $config): array
 {
     $repo = parse_github_repo((string)($config['repo_url'] ?? ''));
@@ -326,7 +363,7 @@ function latest_release_info(array $config): array
     }
 
     $current = current_version();
-    $latest = (string)$data['tag_name'];
+    $latest = release_version_from_github($data);
 
     $updateAvailable = is_latest_newer($latest, $current);
 
@@ -338,6 +375,8 @@ function latest_release_info(array $config): array
         'asset_name' => $assetName,
         'current_version' => $current,
         'latest_version' => $latest,
+        'release_tag' => (string)($data['tag_name'] ?? ''),
+        'release_name' => (string)($data['name'] ?? ''),
         'update_available' => $updateAvailable,
         'published_at' => (string)($data['published_at'] ?? ''),
         'release_url' => (string)($data['html_url'] ?? ''),

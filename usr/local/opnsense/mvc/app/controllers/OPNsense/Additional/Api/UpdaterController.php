@@ -128,7 +128,17 @@ class UpdaterController extends ApiControllerBase
         );
 
         $result = $this->runCommand($command);
-        $decoded = json_decode($result['output'], true);
+        $output = trim($result['output']);
+        $decoded = json_decode($output, true);
+
+        if (!is_array($decoded)) {
+            $jsonStart = strpos($output, '{');
+            $jsonEnd = strrpos($output, '}');
+
+            if ($jsonStart !== false && $jsonEnd !== false && $jsonEnd > $jsonStart) {
+                $decoded = json_decode(substr($output, $jsonStart, $jsonEnd - $jsonStart + 1), true);
+            }
+        }
 
         if (is_array($decoded)) {
             $decoded['exit_code'] = $result['exit_code'];
@@ -137,8 +147,8 @@ class UpdaterController extends ApiControllerBase
 
         return [
             'status' => $result['exit_code'] === 0 ? 'ok' : 'error',
-            'message' => $result['exit_code'] === 0 ? 'Команда выполнена' : 'Ошибка выполнения команды',
-            'output' => $result['output'],
+            'message' => $result['exit_code'] === 0 ? 'Команда выполнена' : 'Ошибка выполнения команды: ' . $output,
+            'output' => $output,
             'exit_code' => $result['exit_code'],
         ];
     }

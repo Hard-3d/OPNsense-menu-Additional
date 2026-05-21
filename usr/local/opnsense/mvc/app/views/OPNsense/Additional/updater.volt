@@ -131,6 +131,8 @@ $(document).ready(function() {
         $("#updater_latest_version").text(data.latest_version || "-");
         $("#updater_last_check").text(data.timestamp || "-");
         $("#updater_release_url").text(data.release_url || "-");
+        $("#updater_release_tag").text(data.release_tag || "-");
+        $("#updater_release_name").text(data.release_name || "-");
         $("#updater_download").text(data.download_name || data.download_type || "-");
 
         if (data.status === "error") {
@@ -289,6 +291,14 @@ $(document).ready(function() {
             <tr>
                 <th>Последняя проверка</th>
                 <td id="updater_last_check">-</td>
+            </tr>
+            <tr>
+                <th>Release tag</th>
+                <td id="updater_release_tag">-</td>
+            </tr>
+            <tr>
+                <th>Release name</th>
+                <td id="updater_release_name">-</td>
             </tr>
             <tr>
                 <th>Release URL</th>
