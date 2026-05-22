@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Installing OPNsense Additional Menu v0.1.12..."
+echo "Installing OPNsense Additional Menu v0.1.13..."
 
 # ownership
 chown -R root:wheel /usr/local/opnsense/mvc/app/models/OPNsense/Additional 2>/dev/null || true
@@ -48,10 +48,6 @@ chmod 644 /usr/local/opnsense/service/conf/actions.d/actions_additional_udp2raw.
 
 
 # udp2raw binary compatibility path for old scripts
-mkdir -p /usr/local/opnsense/scripts/udp2raw
-cp /usr/local/opnsense/scripts/additional/bin/udp2raw_freebsd /usr/local/opnsense/scripts/udp2raw/udp2raw_wireguard 2>/dev/null || true
-chown root:wheel /usr/local/opnsense/scripts/udp2raw/udp2raw_wireguard 2>/dev/null || true
-chmod 755 /usr/local/opnsense/scripts/udp2raw/udp2raw_wireguard 2>/dev/null || true
 chown root:wheel /usr/local/etc/rc.syshook.d/start/92-additional-udp2raw 2>/dev/null || true
 chown root:wheel /usr/local/etc/rc.syshook.d/stop/92-additional-udp2raw 2>/dev/null || true
 
