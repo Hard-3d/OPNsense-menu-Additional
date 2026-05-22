@@ -315,8 +315,9 @@ $(document).ready(function() {
         refreshCardTitle($(this).closest(".udp2raw-instance-card"));
     });
 
-    $("#btn_udp2raw_save").click(function() {
-        showMessage("info", "Сохраняю настройки udp2raw...");
+    function saveUdp2rawConfig(message) {
+        showMessage("info", message || "Сохраняю настройки udp2raw...");
+
         ajaxCall("/api/additional/udp2raw/set", collectConfig(), function(data, status) {
             if (data.status === "ok") {
                 showMessage("success", data.message);
@@ -325,6 +326,14 @@ $(document).ready(function() {
                 showMessage("danger", data.message || "Ошибка сохранения udp2raw");
             }
         });
+    }
+
+    $("#btn_udp2raw_save_general").click(function() {
+        saveUdp2rawConfig("Сохраняю общие настройки udp2raw...");
+    });
+
+    $("#btn_udp2raw_save_instances").click(function() {
+        saveUdp2rawConfig("Сохраняю instances udp2raw...");
     });
 
     $("#btn_udp2raw_start").click(function() { runAction("start", $(this), "Запускаю udp2raw..."); });
@@ -357,9 +366,13 @@ $(document).ready(function() {
             </tr>
         </table>
 
+        <div class="help-block">
+            Эта кнопка сохраняет только общую логику запуска: Autostart и Watchdog. Настройки instances сохраняются отдельной кнопкой в блоке ниже.
+        </div>
+
         <br>
 
-        <button id="btn_udp2raw_save" type="button" class="btn btn-default"><i class="fa fa-save"></i> Сохранить настройки</button>
+        <button id="btn_udp2raw_save_general" type="button" class="btn btn-default"><i class="fa fa-save"></i> Сохранить общие настройки</button>
         <button id="btn_udp2raw_start" type="button" class="btn btn-primary"><i class="fa fa-play"></i> Запустить</button>
         <button id="btn_udp2raw_stop" type="button" class="btn btn-default"><i class="fa fa-stop"></i> Остановить</button>
         <button id="btn_udp2raw_restart" type="button" class="btn btn-primary"><i class="fa fa-refresh"></i> Перезапустить</button>
@@ -376,6 +389,11 @@ $(document).ready(function() {
 
         <div id="udp2raw_instances"></div>
 
+        <div class="help-block">
+            Эта кнопка сохраняет настройки всех udp2raw instances: режим, listen, remote, key, raw-mode, dev, log и дополнительные параметры.
+        </div>
+
+        <button id="btn_udp2raw_save_instances" type="button" class="btn btn-default"><i class="fa fa-save"></i> Сохранить instances</button>
         <button id="btn_udp2raw_add" type="button" class="btn btn-default"><i class="fa fa-plus"></i> Добавить instance</button>
     </div>
 </div>
