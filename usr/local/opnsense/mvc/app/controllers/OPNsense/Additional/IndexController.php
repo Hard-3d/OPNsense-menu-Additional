@@ -26,6 +26,11 @@ class IndexController extends BaseIndexController
         $this->view->pick('OPNsense/Additional/checkwan');
     }
 
+    public function udp2rawAction()
+    {
+        $this->view->pick('OPNsense/Additional/udp2raw');
+    }
+
     public function schedulerAction()
     {
         $this->view->pick('OPNsense/Additional/scheduler');

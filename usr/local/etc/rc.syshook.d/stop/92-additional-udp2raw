@@ -1,0 +1,2 @@
+#!/bin/sh
+/usr/local/opnsense/scripts/additional/udp2raw-manager.php --stop-all --json >/dev/null 2>&1

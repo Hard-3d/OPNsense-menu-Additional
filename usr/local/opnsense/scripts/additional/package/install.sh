@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Installing OPNsense Additional Menu v0.1.11..."
+echo "Installing OPNsense Additional Menu v0.1.12..."
 
 # ownership
 chown -R root:wheel /usr/local/opnsense/mvc/app/models/OPNsense/Additional 2>/dev/null || true
@@ -14,6 +14,7 @@ chown root:wheel /usr/local/opnsense/service/conf/actions.d/actions_additional_g
 chown root:wheel /usr/local/opnsense/service/conf/actions.d/actions_additional_check_status.conf 2>/dev/null || true
 chown root:wheel /usr/local/opnsense/service/conf/actions.d/actions_additional_check_wan.conf 2>/dev/null || true
 chown root:wheel /usr/local/opnsense/service/conf/actions.d/actions_additional_updater.conf 2>/dev/null || true
+chown root:wheel /usr/local/opnsense/service/conf/actions.d/actions_additional_udp2raw.conf 2>/dev/null || true
 chmod 644 /usr/local/opnsense/service/conf/actions.d/actions_additional_scheduler.conf 2>/dev/null || true
 chown root:wheel /usr/local/opnsense/service/conf/actions.d/actions_additional_scheduler.conf 2>/dev/null || true
 
@@ -34,11 +35,25 @@ chmod 755 /usr/local/opnsense/scripts/additional/check-tailscale-status.php 2>/d
 chmod 755 /usr/local/opnsense/scripts/additional/check-wan-gateway-loss.php 2>/dev/null || true
 chmod 755 /usr/local/opnsense/scripts/additional/additional-updater.php 2>/dev/null || true
 chmod 755 /usr/local/opnsense/scripts/additional/additional-scheduler.php 2>/dev/null || true
+chmod 755 /usr/local/opnsense/scripts/additional/udp2raw-manager.php 2>/dev/null || true
+chmod 755 /usr/local/opnsense/scripts/additional/bin/udp2raw_freebsd 2>/dev/null || true
+chmod 755 /usr/local/etc/rc.syshook.d/start/92-additional-udp2raw 2>/dev/null || true
+chmod 755 /usr/local/etc/rc.syshook.d/stop/92-additional-udp2raw 2>/dev/null || true
 
 chmod 644 /usr/local/opnsense/service/conf/actions.d/actions_additional_geoip.conf 2>/dev/null || true
 chmod 644 /usr/local/opnsense/service/conf/actions.d/actions_additional_check_status.conf 2>/dev/null || true
 chmod 644 /usr/local/opnsense/service/conf/actions.d/actions_additional_check_wan.conf 2>/dev/null || true
 chmod 644 /usr/local/opnsense/service/conf/actions.d/actions_additional_updater.conf 2>/dev/null || true
+chmod 644 /usr/local/opnsense/service/conf/actions.d/actions_additional_udp2raw.conf 2>/dev/null || true
+
+
+# udp2raw binary compatibility path for old scripts
+mkdir -p /usr/local/opnsense/scripts/udp2raw
+cp /usr/local/opnsense/scripts/additional/bin/udp2raw_freebsd /usr/local/opnsense/scripts/udp2raw/udp2raw_wireguard 2>/dev/null || true
+chown root:wheel /usr/local/opnsense/scripts/udp2raw/udp2raw_wireguard 2>/dev/null || true
+chmod 755 /usr/local/opnsense/scripts/udp2raw/udp2raw_wireguard 2>/dev/null || true
+chown root:wheel /usr/local/etc/rc.syshook.d/start/92-additional-udp2raw 2>/dev/null || true
+chown root:wheel /usr/local/etc/rc.syshook.d/stop/92-additional-udp2raw 2>/dev/null || true
 
 # syntax checks
 php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/IndexController.php
@@ -48,6 +63,7 @@ php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/Checkstat
 php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/CheckwanController.php
 php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/UpdaterController.php
 php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/SchedulerController.php
+php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/Udp2rawController.php
 
 php -l /usr/local/opnsense/scripts/additional/lib.php
 php -l /usr/local/opnsense/scripts/additional/updategeoip.php
@@ -56,6 +72,7 @@ php -l /usr/local/opnsense/scripts/additional/check-tailscale-status.php
 php -l /usr/local/opnsense/scripts/additional/check-wan-gateway-loss.php
 php -l /usr/local/opnsense/scripts/additional/additional-updater.php
 php -l /usr/local/opnsense/scripts/additional/additional-scheduler.php
+php -l /usr/local/opnsense/scripts/additional/udp2raw-manager.php
 
 php -r 'simplexml_load_file("/usr/local/opnsense/mvc/app/models/OPNsense/Additional/Menu/Menu.xml") === false ? exit(1) : print("Menu.xml OK\n");'
 php -r 'simplexml_load_file("/usr/local/opnsense/mvc/app/models/OPNsense/Additional/ACL/ACL.xml") === false ? exit(1) : print("ACL.xml OK\n");'

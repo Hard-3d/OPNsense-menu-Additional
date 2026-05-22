@@ -28,6 +28,10 @@ function tasks_definition(): array
             'title' => 'Check WAN',
             'command' => '/usr/local/opnsense/scripts/additional/check-wan-gateway-loss.php',
         ],
+        'udp2raw_watchdog' => [
+            'title' => 'udp2raw watchdog',
+            'command' => '/usr/local/opnsense/scripts/additional/udp2raw-manager.php --watchdog --json',
+        ],
         'update_check' => [
             'title' => 'Update check',
             'command' => '/usr/local/opnsense/scripts/additional/additional-updater.php --check --json',
@@ -60,6 +64,12 @@ function default_task_config(string $taskId): array
             'enabled' => '0',
             'mode' => 'interval',
             'interval_minutes' => '2',
+            'time' => '00:00',
+        ],
+        'udp2raw_watchdog' => [
+            'enabled' => '0',
+            'mode' => 'interval',
+            'interval_minutes' => '1',
             'time' => '00:00',
         ],
         'update_check' => [

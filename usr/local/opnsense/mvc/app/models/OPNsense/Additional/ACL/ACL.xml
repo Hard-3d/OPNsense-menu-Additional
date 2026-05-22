@@ -38,6 +38,15 @@
                     <pattern>api/additional/scheduler/*</pattern>
         </patterns>
     </page-additional-checkwan>
+    <page-additional-udp2raw>
+        <name>WebCfg - Additional: udp2raw</name>
+        <description>Allow access to Additional udp2raw</description>
+        <patterns>
+            <pattern>ui/additional/index/udp2raw</pattern>
+            <pattern>api/additional/udp2raw/*</pattern>
+            <pattern>api/additional/scheduler/*</pattern>
+        </patterns>
+    </page-additional-udp2raw>
     <page-additional-scheduler>
         <name>WebCfg - Additional: Scheduler</name>
         <description>Allow access to Additional Scheduler</description>

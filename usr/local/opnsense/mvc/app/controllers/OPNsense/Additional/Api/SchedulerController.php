@@ -20,6 +20,7 @@ class SchedulerController extends ApiControllerBase
             'wireguard_check' => ['title' => 'WireGuard check'],
             'tailscale_check' => ['title' => 'Tailscale check'],
             'check_wan' => ['title' => 'Check WAN'],
+            'udp2raw_watchdog' => ['title' => 'udp2raw watchdog'],
             'update_check' => ['title' => 'Update check'],
         ];
     }
@@ -31,6 +32,7 @@ class SchedulerController extends ApiControllerBase
             'wireguard_check' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '2', 'time' => '00:00'],
             'tailscale_check' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '2', 'time' => '00:00'],
             'check_wan' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '2', 'time' => '00:00'],
+            'udp2raw_watchdog' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '1', 'time' => '00:00'],
             'update_check' => ['enabled' => '0', 'mode' => 'daily', 'interval_minutes' => '1440', 'time' => '06:00'],
         ];
 

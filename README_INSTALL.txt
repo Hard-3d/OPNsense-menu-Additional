@@ -1,8 +1,8 @@
-OPNsense Additional Menu v0.1.11
+OPNsense Additional Menu v0.1.12
 
 Установка:
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.11-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.12-root.zip
 chmod 755 /install.sh
 /install.sh
 
@@ -15,13 +15,14 @@ Logout -> Login
 - GeoIP update
 - Check VPN status
 - Check WAN
+- udp2raw
 - Scheduler
 - Update
 
 Для GitHub:
 - распакуйте архив в локальную папку репозитория;
 - сделайте git add/commit/push;
-- создайте Release v0.1.11;
+- создайте Release v0.1.12;
 - загрузите этот же root ZIP как release asset.
 
 

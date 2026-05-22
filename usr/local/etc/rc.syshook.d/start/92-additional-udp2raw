@@ -1,0 +1,2 @@
+#!/bin/sh
+/usr/local/opnsense/scripts/additional/udp2raw-manager.php --autostart --json >/dev/null 2>&1 &
