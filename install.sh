@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Installing OPNsense Additional Menu v0.1.20..."
+echo "Installing OPNsense Additional Menu v0.1.21..."
 
 # ownership
 chown -R root:wheel /usr/local/opnsense/mvc/app/models/OPNsense/Additional 2>/dev/null || true

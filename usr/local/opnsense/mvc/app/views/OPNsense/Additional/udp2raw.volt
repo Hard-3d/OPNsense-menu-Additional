@@ -84,8 +84,7 @@
         gap: 6px;
     }
 
-    .udp2raw-dev-field.is-hidden,
-    .udp2raw-client-dev-manual-field.is-hidden {
+    .udp2raw-dev-field.is-hidden {
         display: none;
     }
 
@@ -209,24 +208,9 @@ $(document).ready(function() {
     function updateDevVisibility(card) {
         var mode = card.find(".udp2raw-mode").val() || "client";
         var devField = card.find(".udp2raw-dev-field");
-        var manualField = card.find(".udp2raw-client-dev-manual-field");
-        var manual = card.find(".udp2raw-client-dev-manual");
         var dev = card.find(".udp2raw-dev");
 
         if (mode === "server") {
-            manualField.addClass("is-hidden");
-            manual.prop("checked", false);
-            devField.removeClass("is-hidden");
-
-            if (!dev.val() && interfaceList.length > 0) {
-                dev.val(interfaceList[0].value);
-            }
-            return;
-        }
-
-        manualField.removeClass("is-hidden");
-
-        if (manual.is(":checked")) {
             devField.removeClass("is-hidden");
 
             if (!dev.val() && interfaceList.length > 0) {
@@ -264,10 +248,7 @@ $(document).ready(function() {
             .append('<option value="udp">udp</option>')
             .append('<option value="icmp">icmp</option>')
             .val(instance.raw_mode || "easyfaketcp");
-        var clientDevManual = $('<label style="font-weight: normal; margin-top: 8px;">')
-            .append($('<input type="checkbox" class="udp2raw-client-dev-manual">').prop("checked", (instance.mode || "client") === "client" && !!instance.dev))
-            .append(" Задать Dev вручную");
-        var dev = buildDevSelect(instance.dev || "");
+        var dev = buildDevSelect((instance.mode || "client") === "server" ? (instance.dev || "") : "");
         var logLevel = $('<input type="text" class="form-control udp2raw-log-level">').val(instance.log_level || "3");
         var extra = $('<input type="text" class="form-control udp2raw-extra" placeholder="доп. параметры">').val(instance.extra_args || "");
         var del = $('<button type="button" class="btn btn-xs btn-danger udp2raw-delete"><i class="fa fa-trash"></i> Удалить</button>');
@@ -279,7 +260,6 @@ $(document).ready(function() {
         grid.append(fieldBlock("Remote (-r)", remote));
         grid.append(fieldBlock("Key (-k)", key, "udp2raw-field-wide"));
         grid.append(fieldBlock("Raw mode", rawMode));
-        grid.append(fieldBlock("Client Dev", clientDevManual, "udp2raw-client-dev-manual-field"));
         grid.append(fieldBlock("Dev (--dev)", dev, "udp2raw-dev-field"));
         grid.append(fieldBlock("Log", logLevel));
         grid.append(fieldBlock("Extra args", extra, "udp2raw-field-wide"));
@@ -335,7 +315,7 @@ $(document).ready(function() {
                 remote: card.find(".udp2raw-remote").val(),
                 key: card.find(".udp2raw-key").val(),
                 raw_mode: card.find(".udp2raw-raw-mode").val(),
-                dev: (card.find(".udp2raw-mode").val() === "client" && !card.find(".udp2raw-client-dev-manual").is(":checked")) ? "" : card.find(".udp2raw-dev").val(),
+                dev: card.find(".udp2raw-mode").val() === "server" ? card.find(".udp2raw-dev").val() : "",
                 log_level: card.find(".udp2raw-log-level").val(),
                 extra_args: card.find(".udp2raw-extra").val()
             });
@@ -398,7 +378,7 @@ $(document).ready(function() {
         $(this).closest(".udp2raw-instance-card").remove();
     });
 
-    $("#udp2raw_instances").on("input change", ".udp2raw-name, .udp2raw-mode, .udp2raw-client-dev-manual", function() {
+    $("#udp2raw_instances").on("input change", ".udp2raw-name, .udp2raw-mode", function() {
         var card = $(this).closest(".udp2raw-instance-card");
         refreshCardTitle(card);
         updateDevVisibility(card);
@@ -474,7 +454,7 @@ $(document).ready(function() {
         <div class="alert alert-info udp2raw-help">
             Для клиента используется ключ <b>-c</b>, для сервера <b>-s</b>. Поле <b>Listen</b> соответствует <b>-l</b>, <b>Remote</b> соответствует <b>-r</b>.
             Поле <b>Dev (--dev)</b> показывается только для server mode и выбирается из интерфейсов OPNsense.
-            В client mode интерфейс определяется автоматически по маршруту до <b>Remote</b>. Если автодетект выбрал неподходящий интерфейс, включите <b>Client Dev → Задать Dev вручную</b>.
+            В client mode интерфейс определяется автоматически по маршруту до <b>Remote</b>.
             Для WireGuard обычно endpoint указывается на локальный порт udp2raw, например <code>127.0.0.1:51821</code>.
         </div>
 
