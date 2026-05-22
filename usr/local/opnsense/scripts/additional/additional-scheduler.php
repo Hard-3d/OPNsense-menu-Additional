@@ -5,6 +5,7 @@ declare(strict_types=1);
 
 const SCRIPT_NAME = 'additional-scheduler';
 const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/scheduler.json';
+const UPDATE_MANAGER_CONFIG_FILE = '/usr/local/opnsense/scripts/additional/update_manager.json';
 const STATE_FILE = '/var/run/additional_scheduler_state.json';
 const LOCK_FILE = '/tmp/additional_scheduler.lock';
 
@@ -342,8 +343,117 @@ function run_command(string $command): array
     ];
 }
 
+
+function load_update_manager_config(): array
+{
+    $defaults = [
+        'repo_url' => '',
+        'asset_name' => '',
+        'auto_update' => '0',
+    ];
+
+    if (!is_readable(UPDATE_MANAGER_CONFIG_FILE)) {
+        return $defaults;
+    }
+
+    $raw = file_get_contents(UPDATE_MANAGER_CONFIG_FILE);
+    $data = json_decode((string)$raw, true);
+
+    if (!is_array($data)) {
+        return $defaults;
+    }
+
+    return array_merge($defaults, $data);
+}
+
+function parse_json_from_output(string $output): array
+{
+    $decoded = json_decode(trim($output), true);
+
+    if (is_array($decoded)) {
+        return $decoded;
+    }
+
+    $start = strpos($output, '{');
+    $end = strrpos($output, '}');
+
+    if ($start !== false && $end !== false && $end > $start) {
+        $decoded = json_decode(substr($output, $start, $end - $start + 1), true);
+        if (is_array($decoded)) {
+            return $decoded;
+        }
+    }
+
+    return [];
+}
+
+function run_update_check_task(): array
+{
+    $config = load_update_manager_config();
+    $autoUpdate = normalize_bool01($config['auto_update'] ?? '0') === '1';
+
+    $checkCommand = '/usr/local/opnsense/scripts/additional/additional-updater.php --check --json';
+    $check = run_command($checkCommand);
+    $checkData = parse_json_from_output($check['output']);
+
+    if ($check['exit_code'] !== 0) {
+        return [
+            'status' => 'error',
+            'message' => 'Ошибка проверки обновлений',
+            'exit_code' => $check['exit_code'],
+            'output' => $check['output'],
+        ];
+    }
+
+    $updateAvailable = !empty($checkData['update_available']);
+    $currentVersion = (string)($checkData['current_version'] ?? '');
+    $latestVersion = (string)($checkData['latest_version'] ?? '');
+
+    if (!$updateAvailable) {
+        return [
+            'status' => 'ok',
+            'message' => 'Обновлений нет',
+            'exit_code' => 0,
+            'output' => $check['output'],
+        ];
+    }
+
+    if (!$autoUpdate) {
+        return [
+            'status' => 'ok',
+            'message' => trim('Доступно обновление ' . $currentVersion . ' → ' . $latestVersion),
+            'exit_code' => 0,
+            'output' => $check['output'],
+        ];
+    }
+
+    $updateCommand = '/usr/local/opnsense/scripts/additional/additional-updater.php --update --json';
+    $update = run_command($updateCommand);
+    $updateData = parse_json_from_output($update['output']);
+
+    if ($update['exit_code'] !== 0) {
+        return [
+            'status' => 'error',
+            'message' => 'Автообновление не выполнено',
+            'exit_code' => $update['exit_code'],
+            'output' => $update['output'],
+        ];
+    }
+
+    return [
+        'status' => 'ok',
+        'message' => trim('Автообновление установлено: ' . ($updateData['previous_version'] ?? $currentVersion) . ' → ' . ($updateData['current_version'] ?? $latestVersion)),
+        'exit_code' => 0,
+        'output' => $update['output'],
+    ];
+}
+
 function run_task(string $taskId, array $definition): array
 {
+    if ($taskId === 'update_check') {
+        return run_update_check_task();
+    }
+
     $command = (string)($definition['command'] ?? '');
 
     if ($command === '' || !command_exists($command)) {

@@ -17,7 +17,7 @@
 
 ```sh
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.9-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.10-root.zip
 chmod 755 /install.sh
 /install.sh
 ```
@@ -44,14 +44,14 @@ usr/local/opnsense/...
 
 Пример:
 
-- tag: `v0.1.9`
-- asset: `opnsense-additional-menu-v0.1.9-root.zip`
+- tag: `v0.1.10`
+- asset: `opnsense-additional-menu-v0.1.10-root.zip`
 
 В самой странице **Update** укажите:
 
 ```text
 Repository URL: https://github.com/OWNER/REPO
-Release asset name: opnsense-additional-menu-v0.1.9-root.zip
+Release asset name: opnsense-additional-menu-v0.1.10-root.zip
 ```
 
 Если поле **Release asset name** оставить пустым, updater попробует установить GitHub source ZIP latest release. Это тоже поддерживается, если в корне репозитория есть `install.sh`.
@@ -67,7 +67,7 @@ Release asset name: opnsense-additional-menu-v0.1.9-root.zip
 Для новой версии:
 
 1. Измените файл `usr/local/opnsense/scripts/additional/VERSION`.
-2. Создайте новый git tag, например `v0.1.9`.
+2. Создайте новый git tag, например `v0.1.10`.
 3. Соберите новый root ZIP.
 4. Загрузите ZIP в GitHub Release.
 
@@ -80,17 +80,23 @@ Release asset name: opnsense-additional-menu-v0.1.9-root.zip
 
 После установки служебные файлы `install.sh`, `README.md`, `README_INSTALL.txt`, `.gitignore` удаляются из корня `/` и сохраняются в `/usr/local/opnsense/scripts/additional/package/`.
 
-## v0.1.9
+## v0.1.10
 
 - WireGuard check больше не требует API key/secret пользователя root.
 - Список WireGuard клиентов читается локально из `/conf/config.xml`.
 - Маршруты читаются через `netstat`, перезапуск WireGuard выполняется локальными командами `configctl`/`service`.
 
-## v0.1.9
+## v0.1.10
 
 - На странице Update увеличена ширина полей Repository URL и Release asset name.
 
-## v0.1.9
+## v0.1.10
 
 - Исправлен статус на странице Update после успешного обновления: если текущая версия совпадает с latest release, больше не отображается `Доступно обновление`.
 - Scheduler task `Update check` только проверяет наличие новой версии и не устанавливает обновление автоматически.
+
+## v0.1.10
+
+- Добавлена галочка автообновления на странице Update.
+- Если автообновление включено, задача Scheduler `Update check` при обнаружении новой версии автоматически запускает установку обновления.
+- Если галочка выключена, Scheduler только проверяет наличие новой версии.

@@ -178,6 +178,12 @@ $(document).ready(function() {
                 var config = data.config || {};
                 $("#updater_repo_url").val(config.repo_url || "");
                 $("#updater_asset_name").val(config.asset_name || "");
+                $("#updater_auto_update").prop("checked", config.auto_update === "1" || config.auto_update === 1 || config.auto_update === true);
+                $("#updater_auto_update_status").html(
+                    (config.auto_update === "1" || config.auto_update === 1 || config.auto_update === true)
+                        ? '<span class="label label-warning">Включено</span>'
+                        : '<span class="label label-default">Отключено</span>'
+                );
                 renderUpdateState(data.updater || { current_version: data.current_version });
                 loadUpdaterSchedulerStatus();
             } else {
@@ -191,10 +197,17 @@ $(document).ready(function() {
 
         ajaxCall("/api/additional/updater/set", {
             repo_url: $("#updater_repo_url").val(),
-            asset_name: $("#updater_asset_name").val()
+            asset_name: $("#updater_asset_name").val(),
+            auto_update: $("#updater_auto_update").is(":checked") ? "1" : "0"
         }, function(data, status) {
             if (data.status === "ok") {
                 showMessage("success", data.message);
+                var config = data.config || {};
+                $("#updater_auto_update_status").html(
+                    (config.auto_update === "1" || config.auto_update === 1 || config.auto_update === true)
+                        ? '<span class="label label-warning">Включено</span>'
+                        : '<span class="label label-default">Отключено</span>'
+                );
                 renderUpdateState(data.updater || {});
             } else {
                 showMessage("danger", data.message || "Ошибка сохранения настроек Update");
@@ -276,6 +289,16 @@ $(document).ready(function() {
                    placeholder="Например: opnsense-additional-full-menu-root.zip. Можно оставить пустым для source zip.">
         </div>
 
+        <div class="form-group">
+            <label>
+                <input type="checkbox" id="updater_auto_update">
+                Обновлять автоматически при проверке Scheduler
+            </label>
+            <div class="help-block">
+                Если включено, задача Scheduler «Update check» при обнаружении новой версии автоматически установит обновление.
+            </div>
+        </div>
+
         <button id="btn_updater_save" type="button" class="btn btn-default">
             <i class="fa fa-save"></i>
             Сохранить настройки
@@ -319,6 +342,10 @@ $(document).ready(function() {
             <tr>
                 <th>Задание Scheduler</th>
                 <td id="updater_scheduler_status">-</td>
+            </tr>
+            <tr>
+                <th>Автообновление</th>
+                <td id="updater_auto_update_status">-</td>
             </tr>
             <tr>
                 <th>Release tag</th>

@@ -16,6 +16,7 @@ class UpdaterController extends ApiControllerBase
         return [
             'repo_url' => '',
             'asset_name' => '',
+            'auto_update' => '0',
         ];
     }
 
@@ -193,6 +194,7 @@ class UpdaterController extends ApiControllerBase
 
             $repoUrl = $this->normalizeRepoUrl((string)($payload['repo_url'] ?? ''));
             $assetName = trim((string)($payload['asset_name'] ?? ''));
+            $autoUpdate = !empty($payload['auto_update']) ? '1' : '0';
 
             if ($repoUrl !== '' && !preg_match('#^https://github\.com/[^/]+/[^/]+$#i', $repoUrl)) {
                 return [
@@ -204,6 +206,7 @@ class UpdaterController extends ApiControllerBase
             $this->saveConfig([
                 'repo_url' => $repoUrl,
                 'asset_name' => $assetName,
+                'auto_update' => $autoUpdate,
             ]);
 
             return [
