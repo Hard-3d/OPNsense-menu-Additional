@@ -14,7 +14,7 @@ class UpdaterController extends ApiControllerBase
     private function defaultConfig(): array
     {
         return [
-            'repo_url' => '',
+            'repo_url' => 'https://github.com/Hard-3d/OPNsense-menu-Additional',
             'asset_name' => '',
             'auto_update' => '0',
         ];

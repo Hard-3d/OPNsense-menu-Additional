@@ -10,7 +10,7 @@ const DEFAULT_ASSET_NAME = '';
 function default_config(): array
 {
     return [
-        'repo_url' => '',
+        'repo_url' => 'https://github.com/Hard-3d/OPNsense-menu-Additional',
         'asset_name' => DEFAULT_ASSET_NAME,
     ];
 }

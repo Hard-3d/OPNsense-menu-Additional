@@ -276,7 +276,7 @@ $(document).ready(function() {
                    class="form-control updater-input-wide"
                    style="width: 820px !important; max-width: 100%;"
                    spellcheck="false"
-                   placeholder="https://github.com/OWNER/REPO">
+                   placeholder="https://github.com/Hard-3d/OPNsense-menu-Additional">
         </div>
 
         <div class="form-group">
