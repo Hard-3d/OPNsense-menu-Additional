@@ -9,6 +9,7 @@ class Udp2rawController extends ApiControllerBase
     private const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/udp2raw.json';
     private const MANAGER_FILE = '/usr/local/opnsense/scripts/additional/udp2raw-manager.php';
     private const BINARY_FILE = '/usr/local/opnsense/scripts/additional/bin/udp2raw_freebsd';
+    private const CONFIG_XML = '/conf/config.xml';
 
     private function defaultInstance(): array
     {
@@ -199,6 +200,73 @@ class Udp2rawController extends ApiControllerBase
         return $data;
     }
 
+
+    private function getInterfaces(): array
+    {
+        $result = [];
+        $seen = [];
+
+        if (is_readable(self::CONFIG_XML)) {
+            libxml_use_internal_errors(true);
+            $xml = simplexml_load_file(self::CONFIG_XML);
+
+            if ($xml !== false && isset($xml->interfaces)) {
+                foreach ($xml->interfaces->children() as $name => $interface) {
+                    $if = trim((string)($interface->if ?? ''));
+
+                    if ($if === '' || isset($seen[$if])) {
+                        continue;
+                    }
+
+                    $descr = trim((string)($interface->descr ?? ''));
+                    $label = $descr !== '' ? $descr . ' / ' . $if : $if;
+
+                    $result[] = [
+                        'value' => $if,
+                        'label' => $label,
+                        'name' => (string)$name,
+                        'descr' => $descr,
+                    ];
+                    $seen[$if] = true;
+                }
+            }
+
+            libxml_clear_errors();
+        }
+
+        $output = [];
+        $exitCode = 0;
+        exec('/sbin/ifconfig -l 2>/dev/null', $output, $exitCode);
+
+        if ($exitCode === 0 && !empty($output)) {
+            $names = preg_split('/\s+/', trim(implode(' ', $output)));
+
+            if (is_array($names)) {
+                foreach ($names as $if) {
+                    $if = trim((string)$if);
+
+                    if ($if === '' || $if === 'lo0' || isset($seen[$if])) {
+                        continue;
+                    }
+
+                    $result[] = [
+                        'value' => $if,
+                        'label' => $if,
+                        'name' => '',
+                        'descr' => '',
+                    ];
+                    $seen[$if] = true;
+                }
+            }
+        }
+
+        usort($result, function ($a, $b) {
+            return strnatcasecmp((string)$a['label'], (string)$b['label']);
+        });
+
+        return $result;
+    }
+
     public function getAction()
     {
         return [
@@ -210,6 +278,7 @@ class Udp2rawController extends ApiControllerBase
                 'exists' => file_exists(self::BINARY_FILE),
                 'executable' => is_executable(self::BINARY_FILE),
             ],
+            'interfaces' => $this->getInterfaces(),
         ];
     }
 
@@ -228,6 +297,7 @@ class Udp2rawController extends ApiControllerBase
                 'message' => 'Настройки udp2raw сохранены',
                 'config' => $config,
                 'runtime' => $this->runManager('--status'),
+                'interfaces' => $this->getInterfaces(),
             ];
         } catch (\Throwable $e) {
             return [
@@ -282,6 +352,7 @@ class Udp2rawController extends ApiControllerBase
                 'message' => $status === 'ok' ? $okMessage : ($runtime['message'] ?? 'Ошибка udp2raw'),
                 'config' => $this->loadConfig(),
                 'runtime' => $runtime,
+                'interfaces' => $this->getInterfaces(),
             ];
         } catch (\Throwable $e) {
             return [

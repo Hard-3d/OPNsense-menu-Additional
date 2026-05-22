@@ -84,6 +84,10 @@
         gap: 6px;
     }
 
+    .udp2raw-dev-field.is-hidden {
+        display: none;
+    }
+
     .additional-page .btn {
         margin-right: 4px;
         margin-bottom: 6px;
@@ -111,6 +115,7 @@
 <script>
 $(document).ready(function() {
     var runtimeMap = {};
+    var interfaceList = [];
 
     function showMessage(type, message) {
         var box = $("#udp2raw_message");
@@ -164,6 +169,58 @@ $(document).ready(function() {
         card.find(".udp2raw-instance-title").text(name + " / " + mode);
     }
 
+    function normalizeInterfaces(items) {
+        interfaceList = [];
+
+        (items || []).forEach(function(item) {
+            if (!item || !item.value) {
+                return;
+            }
+
+            interfaceList.push({
+                value: item.value,
+                label: item.label || item.value
+            });
+        });
+    }
+
+    function buildDevSelect(currentValue) {
+        var select = $('<select class="form-control udp2raw-dev">');
+        select.append($('<option>').attr("value", "").text("Выберите интерфейс"));
+
+        var found = false;
+        interfaceList.forEach(function(item) {
+            var opt = $('<option>').attr("value", item.value).text(item.label);
+            if (item.value === currentValue) {
+                found = true;
+            }
+            select.append(opt);
+        });
+
+        if (currentValue && !found) {
+            select.append($('<option>').attr("value", currentValue).text(currentValue + " (из настроек)"));
+        }
+
+        select.val(currentValue || "");
+        return select;
+    }
+
+    function updateDevVisibility(card) {
+        var mode = card.find(".udp2raw-mode").val() || "client";
+        var field = card.find(".udp2raw-dev-field");
+        var dev = card.find(".udp2raw-dev");
+
+        if (mode === "server") {
+            field.removeClass("is-hidden");
+
+            if (!dev.val() && interfaceList.length > 0) {
+                dev.val(interfaceList[0].value);
+            }
+        } else {
+            field.addClass("is-hidden");
+        }
+    }
+
     function addInstanceRow(instance) {
         instance = instance || {};
         var id = instance.id || ("instance_" + (new Date().getTime()));
@@ -190,7 +247,7 @@ $(document).ready(function() {
             .append('<option value="udp">udp</option>')
             .append('<option value="icmp">icmp</option>')
             .val(instance.raw_mode || "easyfaketcp");
-        var dev = $('<input type="text" class="form-control udp2raw-dev" placeholder="vmx1">').val(instance.dev || "");
+        var dev = buildDevSelect(instance.dev || "");
         var logLevel = $('<input type="text" class="form-control udp2raw-log-level">').val(instance.log_level || "3");
         var extra = $('<input type="text" class="form-control udp2raw-extra" placeholder="доп. параметры">').val(instance.extra_args || "");
         var del = $('<button type="button" class="btn btn-xs btn-danger udp2raw-delete"><i class="fa fa-trash"></i> Удалить</button>');
@@ -202,7 +259,7 @@ $(document).ready(function() {
         grid.append(fieldBlock("Remote (-r)", remote));
         grid.append(fieldBlock("Key (-k)", key, "udp2raw-field-wide"));
         grid.append(fieldBlock("Raw mode", rawMode));
-        grid.append(fieldBlock("Dev", dev));
+        grid.append(fieldBlock("Dev (--dev)", dev, "udp2raw-dev-field"));
         grid.append(fieldBlock("Log", logLevel));
         grid.append(fieldBlock("Extra args", extra, "udp2raw-field-wide"));
         grid.append($('<div class="udp2raw-actions">').append(del));
@@ -212,10 +269,12 @@ $(document).ready(function() {
 
         $("#udp2raw_instances").append(card);
         refreshCardTitle(card);
+        updateDevVisibility(card);
     }
 
-    function renderConfig(config, runtime) {
+    function renderConfig(config, runtime, interfaces) {
         updateRuntimeMap(runtime);
+        normalizeInterfaces(interfaces || interfaceList);
         config = config || {};
         $("#udp2raw_autostart").prop("checked", bool01(config.autostart));
         $("#udp2raw_watchdog").prop("checked", bool01(config.watchdog));
@@ -272,7 +331,7 @@ $(document).ready(function() {
         hideMessage();
         ajaxCall("/api/additional/udp2raw/get", {}, function(data, status) {
             if (data.status === "ok") {
-                renderConfig(data.config || {}, data.runtime || {});
+                renderConfig(data.config || {}, data.runtime || {}, data.interfaces || []);
                 renderBinary(data.binary || {});
             } else {
                 showMessage("danger", data.message || "Ошибка загрузки udp2raw");
@@ -291,7 +350,7 @@ $(document).ready(function() {
 
             if (data.status === "ok") {
                 showMessage("success", data.message || "Команда выполнена");
-                renderConfig(data.config || collectConfig(), data.runtime || {});
+                renderConfig(data.config || collectConfig(), data.runtime || {}, data.interfaces || interfaceList);
             } else {
                 showMessage("danger", data.message || "Ошибка udp2raw");
             }
@@ -319,7 +378,9 @@ $(document).ready(function() {
     });
 
     $("#udp2raw_instances").on("input change", ".udp2raw-name, .udp2raw-mode", function() {
-        refreshCardTitle($(this).closest(".udp2raw-instance-card"));
+        var card = $(this).closest(".udp2raw-instance-card");
+        refreshCardTitle(card);
+        updateDevVisibility(card);
     });
 
     function saveUdp2rawConfig(message) {
@@ -328,7 +389,7 @@ $(document).ready(function() {
         ajaxCall("/api/additional/udp2raw/set", collectConfig(), function(data, status) {
             if (data.status === "ok") {
                 showMessage("success", data.message);
-                renderConfig(data.config || {}, data.runtime || {});
+                renderConfig(data.config || {}, data.runtime || {}, data.interfaces || interfaceList);
             } else {
                 showMessage("danger", data.message || "Ошибка сохранения udp2raw");
             }
@@ -391,6 +452,7 @@ $(document).ready(function() {
 
         <div class="alert alert-info udp2raw-help">
             Для клиента используется ключ <b>-c</b>, для сервера <b>-s</b>. Поле <b>Listen</b> соответствует <b>-l</b>, <b>Remote</b> соответствует <b>-r</b>.
+            Поле <b>Dev (--dev)</b> показывается только для server mode и выбирается из интерфейсов OPNsense.
             Для WireGuard обычно endpoint указывается на локальный порт udp2raw, например <code>127.0.0.1:51821</code>.
         </div>
 
