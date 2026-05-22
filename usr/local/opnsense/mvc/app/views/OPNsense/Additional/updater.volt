@@ -163,7 +163,11 @@ $(document).ready(function() {
             $("#updater_state").html('<span class="label label-default">Не проверялось</span>');
         }
 
-        $("#updater_message_text").text(data.message || "-");
+        if (data.update_available === false && data.message === "Обновление установлено") {
+            $("#updater_message_text").text("Обновление установлено. Установлена актуальная версия");
+        } else {
+            $("#updater_message_text").text(data.message || "-");
+        }
     }
 
     function loadUpdater() {

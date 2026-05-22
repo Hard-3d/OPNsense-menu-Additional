@@ -551,6 +551,7 @@ try {
     $info = latest_release_info($config);
 
     if ($args['mode'] === 'check') {
+        $info['mode'] = 'check';
         save_status($info);
         output_result($info, $args['json']);
         exit(0);
@@ -561,10 +562,13 @@ try {
     $result = array_merge($info, [
         'status' => 'ok',
         'ok' => true,
+        'mode' => 'update',
         'message' => 'Обновление установлено',
         'updated' => true,
+        'update_available' => false,
         'previous_version' => $info['current_version'],
         'current_version' => $info['latest_version'],
+        'latest_version' => $info['latest_version'],
         'install_output' => $updateInfo['install_output'],
     ]);
 

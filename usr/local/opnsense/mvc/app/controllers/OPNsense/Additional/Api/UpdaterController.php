@@ -95,6 +95,18 @@ class UpdaterController extends ApiControllerBase
 
         $data['current_version'] = $this->currentVersion();
 
+        if (
+            !empty($data['latest_version']) &&
+            !empty($data['current_version']) &&
+            (string)$data['latest_version'] === (string)$data['current_version']
+        ) {
+            $data['update_available'] = false;
+
+            if (($data['message'] ?? '') === 'Доступна новая версия') {
+                $data['message'] = 'Установлена актуальная версия';
+            }
+        }
+
         return $data;
     }
 
