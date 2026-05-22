@@ -59,6 +59,99 @@ function normalize_endpoint(string $value): string
     return trim($value);
 }
 
+function endpoint_host(string $endpoint): string
+{
+    $endpoint = trim($endpoint);
+
+    if ($endpoint === '') {
+        return '';
+    }
+
+    if (preg_match('/^\[([^\]]+)\](?::\d+)?$/', $endpoint, $m)) {
+        return $m[1];
+    }
+
+    if (strpos($endpoint, ':') !== false) {
+        $parts = explode(':', $endpoint);
+        array_pop($parts);
+        return implode(':', $parts);
+    }
+
+    return $endpoint;
+}
+
+function resolve_host_for_route(string $host): string
+{
+    $host = trim($host);
+
+    if ($host === '') {
+        return '';
+    }
+
+    if (filter_var($host, FILTER_VALIDATE_IP)) {
+        return $host;
+    }
+
+    $resolved = gethostbyname($host);
+
+    if ($resolved !== $host && filter_var($resolved, FILTER_VALIDATE_IP)) {
+        return $resolved;
+    }
+
+    return $host;
+}
+
+function detect_dev_for_remote(string $remote): string
+{
+    $host = resolve_host_for_route(endpoint_host($remote));
+
+    if ($host === '') {
+        return '';
+    }
+
+    $cmd = '/sbin/route -n get ' . escapeshellarg($host) . ' 2>/dev/null';
+    $output = [];
+    $exitCode = 0;
+
+    exec($cmd, $output, $exitCode);
+
+    if ($exitCode !== 0) {
+        return '';
+    }
+
+    foreach ($output as $line) {
+        $line = trim((string)$line);
+
+        if (preg_match('/^(?:interface|ifp):\s*([A-Za-z0-9_.:-]+)/', $line, $m)) {
+            return trim($m[1]);
+        }
+    }
+
+    return '';
+}
+
+function effective_dev(array $instance): string
+{
+    $dev = trim((string)($instance['dev'] ?? ''));
+
+    if ($dev !== '') {
+        return $dev;
+    }
+
+    if (($instance['mode'] ?? '') === 'client') {
+        return detect_dev_for_remote((string)($instance['remote'] ?? ''));
+    }
+
+    return '';
+}
+
+function strip_ansi(string $value): string
+{
+    $value = preg_replace('/\x1b\[[0-9;]*[A-Za-z]/', '', $value);
+    $value = preg_replace('/\x1b\[[0-9;]*m/', '', (string)$value);
+    return trim((string)$value);
+}
+
 function normalize_instance(array $item, int $index = 0): array
 {
     $default = default_instance();
@@ -316,7 +409,7 @@ function log_tail(array $instance, int $lines = 20): string
         return '';
     }
 
-    return trim(implode("\n", $output));
+    return strip_ansi(trim(implode("\n", $output)));
 }
 
 function instance_status(array $instance): array
@@ -337,6 +430,7 @@ function instance_status(array $instance): array
         'listen' => $instance['listen'],
         'remote' => $instance['remote'],
         'raw_mode' => $instance['raw_mode'],
+        'effective_dev' => effective_dev($instance),
         'pid' => $pid,
         'running' => $running,
         'status' => $running ? 'running' : 'stopped',
@@ -370,6 +464,12 @@ function validate_instance_for_start(array $instance): void
         );
     }
 
+    if ($instance['mode'] === 'client' && $instance['dev'] === '' && effective_dev($instance) === '') {
+        throw new RuntimeException(
+            'Для ' . $instance['name'] . ' в client mode не удалось автоматически определить Dev по маршруту до Remote. Проверьте Remote (-r) или укажите интерфейс через extra args: --dev vmx1'
+        );
+    }
+
     if ($instance['extra_args'] !== '' && !preg_match('/^[A-Za-z0-9_.,:=@%+\/\-\s]+$/', $instance['extra_args'])) {
         throw new RuntimeException('В extra args для ' . $instance['name'] . ' найдены недопустимые символы');
     }
@@ -389,9 +489,10 @@ function build_command(array $instance): string
         '--log-level', escapeshellarg($instance['log_level']),
     ];
 
-    if ($instance['dev'] !== '') {
+    $dev = effective_dev($instance);
+    if ($dev !== '') {
         $parts[] = '--dev';
-        $parts[] = escapeshellarg($instance['dev']);
+        $parts[] = escapeshellarg($dev);
     }
 
     if ($instance['extra_args'] !== '') {

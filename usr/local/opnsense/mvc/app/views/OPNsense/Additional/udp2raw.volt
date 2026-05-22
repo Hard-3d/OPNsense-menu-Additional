@@ -453,6 +453,7 @@ $(document).ready(function() {
         <div class="alert alert-info udp2raw-help">
             Для клиента используется ключ <b>-c</b>, для сервера <b>-s</b>. Поле <b>Listen</b> соответствует <b>-l</b>, <b>Remote</b> соответствует <b>-r</b>.
             Поле <b>Dev (--dev)</b> показывается только для server mode и выбирается из интерфейсов OPNsense.
+            В client mode интерфейс определяется автоматически по маршруту до <b>Remote</b>.
             Для WireGuard обычно endpoint указывается на локальный порт udp2raw, например <code>127.0.0.1:51821</code>.
         </div>
 
