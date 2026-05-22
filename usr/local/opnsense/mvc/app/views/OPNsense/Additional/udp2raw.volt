@@ -13,7 +13,7 @@
         background: rgba(255, 255, 255, 0.025);
         box-sizing: border-box;
         max-width: 100%;
-        overflow-x: auto;
+        overflow: visible;
     }
 
     .udp2raw-section h2 {
@@ -23,17 +23,65 @@
         font-weight: 700;
     }
 
-    .udp2raw-table input,
-    .udp2raw-table select {
-        min-width: 130px;
+    .udp2raw-help {
+        margin-bottom: 16px;
     }
 
-    .udp2raw-table .udp2raw-key {
-        min-width: 220px;
+    .udp2raw-instance-card {
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(0, 0, 0, 0.10);
+        padding: 14px;
+        margin-bottom: 14px;
+        box-sizing: border-box;
     }
 
-    .udp2raw-table .udp2raw-extra {
-        min-width: 220px;
+    .udp2raw-instance-head {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 12px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .udp2raw-instance-title {
+        font-weight: 700;
+        min-width: 110px;
+    }
+
+    .udp2raw-instance-status {
+        margin-left: auto;
+    }
+
+    .udp2raw-instance-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 12px 14px;
+        align-items: end;
+    }
+
+    .udp2raw-field label {
+        display: block;
+        font-weight: 700;
+        margin-bottom: 5px;
+        white-space: nowrap;
+    }
+
+    .udp2raw-field input,
+    .udp2raw-field select {
+        width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box;
+    }
+
+    .udp2raw-field-wide {
+        grid-column: span 2;
+    }
+
+    .udp2raw-actions {
+        display: flex;
+        align-items: end;
+        gap: 6px;
     }
 
     .additional-page .btn {
@@ -43,6 +91,20 @@
 
     .additional-page .table {
         margin-bottom: 0;
+    }
+
+    @media (max-width: 900px) {
+        .udp2raw-field-wide {
+            grid-column: span 1;
+        }
+
+        .udp2raw-instance-head {
+            flex-wrap: wrap;
+        }
+
+        .udp2raw-instance-status {
+            margin-left: 0;
+        }
     }
 </style>
 
@@ -81,12 +143,34 @@ $(document).ready(function() {
         });
     }
 
+    function fieldBlock(title, control, extraClass) {
+        var block = $('<div class="udp2raw-field">');
+        if (extraClass) {
+            block.addClass(extraClass);
+        }
+        block.append($('<label>').text(title));
+        block.append(control);
+        return block;
+    }
+
+    function refreshCardTitle(card) {
+        var name = card.find(".udp2raw-name").val() || card.attr("data-id") || "udp2raw";
+        var mode = card.find(".udp2raw-mode").val() || "client";
+        card.find(".udp2raw-instance-title").text(name + " / " + mode);
+    }
+
     function addInstanceRow(instance) {
         instance = instance || {};
         var id = instance.id || ("instance_" + (new Date().getTime()));
-        var row = $("<tr>").attr("data-id", id);
+        var card = $("<div>").addClass("udp2raw-instance-card").attr("data-id", id);
 
         var enabled = $('<input type="checkbox" class="udp2raw-enabled">').prop("checked", bool01(instance.enabled));
+
+        var head = $('<div class="udp2raw-instance-head">');
+        head.append($('<label style="margin:0;">').append(enabled).append(" Включено"));
+        head.append($('<div class="udp2raw-instance-title">').text(instance.name || id));
+        head.append($('<div class="udp2raw-instance-status">').html(statusLabel(runtimeMap[id] || {})));
+
         var name = $('<input type="text" class="form-control udp2raw-name">').val(instance.name || id);
         var mode = $('<select class="form-control udp2raw-mode">')
             .append('<option value="client">client</option>')
@@ -104,23 +188,25 @@ $(document).ready(function() {
         var dev = $('<input type="text" class="form-control udp2raw-dev" placeholder="vmx1">').val(instance.dev || "");
         var logLevel = $('<input type="text" class="form-control udp2raw-log-level">').val(instance.log_level || "3");
         var extra = $('<input type="text" class="form-control udp2raw-extra" placeholder="доп. параметры">').val(instance.extra_args || "");
-        var del = $('<button type="button" class="btn btn-xs btn-danger udp2raw-delete"><i class="fa fa-trash"></i></button>');
-        var runtime = runtimeMap[id] || {};
+        var del = $('<button type="button" class="btn btn-xs btn-danger udp2raw-delete"><i class="fa fa-trash"></i> Удалить</button>');
 
-        row.append($('<td>').append(enabled));
-        row.append($('<td>').append(name));
-        row.append($('<td>').append(mode));
-        row.append($('<td>').append(listen));
-        row.append($('<td>').append(remote));
-        row.append($('<td>').append(key));
-        row.append($('<td>').append(rawMode));
-        row.append($('<td>').append(dev));
-        row.append($('<td>').append(logLevel));
-        row.append($('<td>').append(extra));
-        row.append($('<td class="udp2raw-status">').html(statusLabel(runtime)));
-        row.append($('<td>').append(del));
+        var grid = $('<div class="udp2raw-instance-grid">');
+        grid.append(fieldBlock("Name", name));
+        grid.append(fieldBlock("Mode", mode));
+        grid.append(fieldBlock("Listen (-l)", listen));
+        grid.append(fieldBlock("Remote (-r)", remote));
+        grid.append(fieldBlock("Key (-k)", key, "udp2raw-field-wide"));
+        grid.append(fieldBlock("Raw mode", rawMode));
+        grid.append(fieldBlock("Dev", dev));
+        grid.append(fieldBlock("Log", logLevel));
+        grid.append(fieldBlock("Extra args", extra, "udp2raw-field-wide"));
+        grid.append($('<div class="udp2raw-actions">').append(del));
 
-        $("#udp2raw_instances tbody").append(row);
+        card.append(head);
+        card.append(grid);
+
+        $("#udp2raw_instances").append(card);
+        refreshCardTitle(card);
     }
 
     function renderConfig(config, runtime) {
@@ -128,7 +214,7 @@ $(document).ready(function() {
         config = config || {};
         $("#udp2raw_autostart").prop("checked", bool01(config.autostart));
         $("#udp2raw_watchdog").prop("checked", bool01(config.watchdog));
-        $("#udp2raw_instances tbody").empty();
+        $("#udp2raw_instances").empty();
 
         var instances = config.instances || [];
         if (instances.length === 0) {
@@ -151,22 +237,22 @@ $(document).ready(function() {
 
     function collectConfig() {
         var instances = [];
-        $("#udp2raw_instances tbody tr").each(function(index) {
-            var row = $(this);
-            var id = row.attr("data-id") || ("instance_" + (index + 1));
+        $("#udp2raw_instances .udp2raw-instance-card").each(function(index) {
+            var card = $(this);
+            var id = card.attr("data-id") || ("instance_" + (index + 1));
 
             instances.push({
                 id: id,
-                enabled: row.find(".udp2raw-enabled").is(":checked") ? "1" : "0",
-                name: row.find(".udp2raw-name").val(),
-                mode: row.find(".udp2raw-mode").val(),
-                listen: row.find(".udp2raw-listen").val(),
-                remote: row.find(".udp2raw-remote").val(),
-                key: row.find(".udp2raw-key").val(),
-                raw_mode: row.find(".udp2raw-raw-mode").val(),
-                dev: row.find(".udp2raw-dev").val(),
-                log_level: row.find(".udp2raw-log-level").val(),
-                extra_args: row.find(".udp2raw-extra").val()
+                enabled: card.find(".udp2raw-enabled").is(":checked") ? "1" : "0",
+                name: card.find(".udp2raw-name").val(),
+                mode: card.find(".udp2raw-mode").val(),
+                listen: card.find(".udp2raw-listen").val(),
+                remote: card.find(".udp2raw-remote").val(),
+                key: card.find(".udp2raw-key").val(),
+                raw_mode: card.find(".udp2raw-raw-mode").val(),
+                dev: card.find(".udp2raw-dev").val(),
+                log_level: card.find(".udp2raw-log-level").val(),
+                extra_args: card.find(".udp2raw-extra").val()
             });
         });
 
@@ -222,7 +308,11 @@ $(document).ready(function() {
     });
 
     $("#udp2raw_instances").on("click", ".udp2raw-delete", function() {
-        $(this).closest("tr").remove();
+        $(this).closest(".udp2raw-instance-card").remove();
+    });
+
+    $("#udp2raw_instances").on("input change", ".udp2raw-name, .udp2raw-mode", function() {
+        refreshCardTitle($(this).closest(".udp2raw-instance-card"));
     });
 
     $("#btn_udp2raw_save").click(function() {
@@ -279,32 +369,13 @@ $(document).ready(function() {
     <div class="udp2raw-section">
         <h2>Instances</h2>
 
-        <div class="alert alert-info">
+        <div class="alert alert-info udp2raw-help">
             Для клиента используется ключ <b>-c</b>, для сервера <b>-s</b>. Поле <b>Listen</b> соответствует <b>-l</b>, <b>Remote</b> соответствует <b>-r</b>.
             Для WireGuard обычно endpoint указывается на локальный порт udp2raw, например <code>127.0.0.1:51821</code>.
         </div>
 
-        <table id="udp2raw_instances" class="table table-condensed udp2raw-table">
-            <thead>
-                <tr>
-                    <th>Вкл.</th>
-                    <th>Name</th>
-                    <th>Mode</th>
-                    <th>Listen (-l)</th>
-                    <th>Remote (-r)</th>
-                    <th>Key (-k)</th>
-                    <th>Raw mode</th>
-                    <th>Dev</th>
-                    <th>Log</th>
-                    <th>Extra args</th>
-                    <th>Status</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody></tbody>
-        </table>
+        <div id="udp2raw_instances"></div>
 
-        <br>
         <button id="btn_udp2raw_add" type="button" class="btn btn-default"><i class="fa fa-plus"></i> Добавить instance</button>
     </div>
 </div>
