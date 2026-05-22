@@ -260,6 +260,20 @@ class Udp2rawController extends ApiControllerBase
     private function actionResponse(string $managerAction, string $okMessage): array
     {
         try {
+            /*
+             * Start/restart should use values currently visible on the page.
+             * Otherwise user can change Dev/Remote/Key in UI and press Start
+             * without pressing "Save instances", while manager still uses old
+             * udp2raw.json.
+             */
+            if ($managerAction === '--start-all' || $managerAction === '--restart-all') {
+                $payload = $this->request->getJsonRawBody(true);
+
+                if (is_array($payload) && isset($payload['instances']) && is_array($payload['instances'])) {
+                    $this->saveConfig($payload);
+                }
+            }
+
             $runtime = $this->runManager($managerAction);
             $status = ($runtime['status'] ?? '') === 'error' ? 'error' : 'ok';
 

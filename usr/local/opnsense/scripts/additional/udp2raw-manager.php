@@ -364,6 +364,12 @@ function validate_instance_for_start(array $instance): void
         throw new RuntimeException('Для ' . $instance['name'] . ' не заполнен key (-k)');
     }
 
+    if ($instance['mode'] === 'server' && $instance['dev'] === '') {
+        throw new RuntimeException(
+            'Для ' . $instance['name'] . ' в server mode на FreeBSD/OPNsense обязательно заполните Dev (--dev), например vmx1'
+        );
+    }
+
     if ($instance['extra_args'] !== '' && !preg_match('/^[A-Za-z0-9_.,:=@%+\/\-\s]+$/', $instance['extra_args'])) {
         throw new RuntimeException('В extra args для ' . $instance['name'] . ' найдены недопустимые символы');
     }

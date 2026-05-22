@@ -280,11 +280,13 @@ $(document).ready(function() {
         });
     }
 
-    function runAction(action, button, infoText) {
+    function runAction(action, button, infoText, sendCurrentConfig) {
         button.prop("disabled", true);
         showMessage("info", infoText);
 
-        ajaxCall("/api/additional/udp2raw/" + action, {}, function(data, status) {
+        var payload = sendCurrentConfig ? collectConfig() : {};
+
+        ajaxCall("/api/additional/udp2raw/" + action, payload, function(data, status) {
             button.prop("disabled", false);
 
             if (data.status === "ok") {
@@ -341,9 +343,9 @@ $(document).ready(function() {
         saveUdp2rawConfig("Сохраняю instances udp2raw...");
     });
 
-    $("#btn_udp2raw_start").click(function() { runAction("start", $(this), "Запускаю udp2raw..."); });
-    $("#btn_udp2raw_stop").click(function() { runAction("stop", $(this), "Останавливаю udp2raw..."); });
-    $("#btn_udp2raw_restart").click(function() { runAction("restart", $(this), "Перезапускаю udp2raw..."); });
+    $("#btn_udp2raw_start").click(function() { runAction("start", $(this), "Сохраняю текущие настройки и запускаю udp2raw...", true); });
+    $("#btn_udp2raw_stop").click(function() { runAction("stop", $(this), "Останавливаю udp2raw...", false); });
+    $("#btn_udp2raw_restart").click(function() { runAction("restart", $(this), "Сохраняю текущие настройки и перезапускаю udp2raw...", true); });
     $("#btn_udp2raw_refresh").click(loadUdp2raw);
 
     loadUdp2raw();
