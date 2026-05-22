@@ -101,15 +101,42 @@ function resolve_host_for_route(string $host): string
     return $host;
 }
 
-function detect_dev_for_remote(string $remote): string
+function is_bad_pcap_dev(string $dev): bool
 {
-    $host = resolve_host_for_route(endpoint_host($remote));
+    $dev = strtolower(trim($dev));
 
-    if ($host === '') {
+    if ($dev === '') {
+        return true;
+    }
+
+    /*
+     * Эти интерфейсы часто имеют DLT_NULL/loopback/tunnel link type.
+     * Для udp2raw на FreeBSD/OPNsense нужен физический Ethernet-like dev.
+     */
+    $badPrefixes = [
+        'lo', 'pflog', 'pfsync', 'enc', 'ipsec',
+        'tun', 'tap', 'wg', 'wireguard', 'ovpn', 'tailscale',
+        'gif', 'gre', 'stf', 'vxlan'
+    ];
+
+    foreach ($badPrefixes as $prefix) {
+        if (strpos($dev, $prefix) === 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function parse_route_get_dev(string $target): string
+{
+    $target = trim($target);
+
+    if ($target === '') {
         return '';
     }
 
-    $cmd = '/sbin/route -n get ' . escapeshellarg($host) . ' 2>/dev/null';
+    $cmd = '/sbin/route -n get ' . escapeshellarg($target) . ' 2>/dev/null';
     $output = [];
     $exitCode = 0;
 
@@ -128,6 +155,79 @@ function detect_dev_for_remote(string $remote): string
     }
 
     return '';
+}
+
+function default_route_dev(): string
+{
+    $dev = parse_route_get_dev('8.8.8.8');
+
+    if ($dev !== '' && !is_bad_pcap_dev($dev)) {
+        return $dev;
+    }
+
+    $dev = parse_route_get_dev('1.1.1.1');
+
+    if ($dev !== '' && !is_bad_pcap_dev($dev)) {
+        return $dev;
+    }
+
+    return '';
+}
+
+function first_physical_dev(): string
+{
+    $output = [];
+    $exitCode = 0;
+
+    exec('/sbin/ifconfig -l 2>/dev/null', $output, $exitCode);
+
+    if ($exitCode !== 0 || empty($output)) {
+        return '';
+    }
+
+    $names = preg_split('/\s+/', trim(implode(' ', $output)));
+
+    if (!is_array($names)) {
+        return '';
+    }
+
+    foreach ($names as $dev) {
+        $dev = trim((string)$dev);
+
+        if ($dev !== '' && !is_bad_pcap_dev($dev)) {
+            return $dev;
+        }
+    }
+
+    return '';
+}
+
+function detect_dev_for_remote(string $remote): string
+{
+    $host = resolve_host_for_route(endpoint_host($remote));
+
+    if ($host === '') {
+        return '';
+    }
+
+    $routeDev = parse_route_get_dev($host);
+
+    if ($routeDev !== '' && !is_bad_pcap_dev($routeDev)) {
+        return $routeDev;
+    }
+
+    /*
+     * Если маршрут указывает на lo0/tun/wg/tailscale и т.п.,
+     * udp2raw получает ошибку вроде "unknown pcap link type : 109".
+     * В этом случае используем физический default route dev как fallback.
+     */
+    $defaultDev = default_route_dev();
+
+    if ($defaultDev !== '') {
+        return $defaultDev;
+    }
+
+    return first_physical_dev();
 }
 
 function effective_dev(array $instance): string
@@ -529,6 +629,7 @@ function start_instance(array $instance): array
     $log = log_file($instance);
     @touch($log);
     @chmod($log, 0644);
+    @file_put_contents($log, '');
 
     $command = sprintf(
         'nohup %s >> %s 2>&1 & echo $!',
