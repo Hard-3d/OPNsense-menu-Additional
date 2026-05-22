@@ -132,6 +132,11 @@ $(document).ready(function() {
         if (item && item.running) {
             return '<span class="label label-success">Работает, PID ' + item.pid + '</span>';
         }
+
+        if (item && item.last_log) {
+            return '<span class="label label-default" title="' + String(item.last_log).replace(/"/g, '&quot;') + '">Остановлен</span>';
+        }
+
         return '<span class="label label-default">Остановлен</span>';
     }
 

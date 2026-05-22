@@ -198,15 +198,125 @@ function is_pid_running(int $pid): bool
     return $exitCode === 0;
 }
 
-function current_pid(array $instance): int
+function command_matches_instance(string $command, array $instance): bool
 {
-    $file = pid_file($instance);
-    if (!is_readable($file)) {
+    $binaryBase = basename(BINARY_FILE);
+
+    if (strpos($command, BINARY_FILE) === false && strpos($command, $binaryBase) === false) {
+        return false;
+    }
+
+    $modeFlag = $instance['mode'] === 'server' ? '-s' : '-c';
+    if (strpos(' ' . $command . ' ', ' ' . $modeFlag . ' ') === false) {
+        return false;
+    }
+
+    if ($instance['listen'] !== '' && strpos($command, $instance['listen']) === false) {
+        return false;
+    }
+
+    if ($instance['remote'] !== '' && strpos($command, $instance['remote']) === false) {
+        return false;
+    }
+
+    if ($instance['raw_mode'] !== '' && strpos($command, $instance['raw_mode']) === false) {
+        return false;
+    }
+
+    return true;
+}
+
+function discover_pid(array $instance): int
+{
+    $output = [];
+    $exitCode = 0;
+
+    exec('/bin/ps axww -o pid= -o command= 2>/dev/null', $output, $exitCode);
+
+    if ($exitCode !== 0) {
         return 0;
     }
 
-    $pid = trim((string)file_get_contents($file));
-    return ctype_digit($pid) ? (int)$pid : 0;
+    foreach ($output as $line) {
+        $line = trim((string)$line);
+
+        if ($line === '' || !preg_match('/^(\d+)\s+(.+)$/', $line, $m)) {
+            continue;
+        }
+
+        $pid = (int)$m[1];
+        $command = (string)$m[2];
+
+        if ($pid <= 0 || $pid === getmypid()) {
+            continue;
+        }
+
+        if (strpos($command, 'udp2raw-manager.php') !== false) {
+            continue;
+        }
+
+        if (command_matches_instance($command, $instance) && is_pid_running($pid)) {
+            return $pid;
+        }
+    }
+
+    return 0;
+}
+
+function save_pid(array $instance, int $pid): void
+{
+    if ($pid <= 0) {
+        return;
+    }
+
+    file_put_contents(pid_file($instance), (string)$pid . "\n", LOCK_EX);
+    chmod(pid_file($instance), 0644);
+}
+
+function current_pid(array $instance): int
+{
+    $file = pid_file($instance);
+
+    if (is_readable($file)) {
+        $pid = trim((string)file_get_contents($file));
+
+        if (ctype_digit($pid)) {
+            $pidInt = (int)$pid;
+
+            if (is_pid_running($pidInt)) {
+                return $pidInt;
+            }
+        }
+    }
+
+    $discovered = discover_pid($instance);
+
+    if ($discovered > 0) {
+        save_pid($instance, $discovered);
+        return $discovered;
+    }
+
+    return 0;
+}
+
+function log_tail(array $instance, int $lines = 20): string
+{
+    $file = log_file($instance);
+
+    if (!is_readable($file)) {
+        return '';
+    }
+
+    $output = [];
+    $exitCode = 0;
+
+    exec('/usr/bin/tail -n ' . escapeshellarg((string)$lines) . ' ' . escapeshellarg($file) . ' 2>/dev/null', $output, $exitCode);
+
+    if ($exitCode !== 0) {
+        return '';
+    }
+
+    return trim(implode("\n", $output));
 }
 
 function instance_status(array $instance): array
@@ -232,6 +342,7 @@ function instance_status(array $instance): array
         'status' => $running ? 'running' : 'stopped',
         'pid_file' => pid_file($instance),
         'log_file' => log_file($instance),
+        'last_log' => $running ? '' : log_tail($instance, 10),
     ];
 }
 
@@ -328,15 +439,34 @@ function start_instance(array $instance): array
         throw new RuntimeException('Не удалось запустить ' . $instance['name']);
     }
 
-    file_put_contents(pid_file($instance), (string)$pid . "\n", LOCK_EX);
-    chmod(pid_file($instance), 0644);
+    save_pid($instance, $pid);
+
+    /*
+     * udp2raw на некоторых сборках может быстро сменить PID или отпустить
+     * родительский процесс. Поэтому после старта ждём немного и ищем
+     * реальный процесс по командной строке.
+     */
+    usleep(800000);
+
+    $realPid = current_pid($instance);
+
+    if ($realPid <= 0) {
+        $tail = log_tail($instance, 30);
+        throw new RuntimeException(
+            'udp2raw стартовал, но рабочий процесс не найден после запуска: ' .
+            $instance['name'] .
+            ($tail !== '' ? '. Последние строки лога: ' . $tail : '')
+        );
+    }
+
+    save_pid($instance, $realPid);
 
     return [
         'id' => $instance['id'],
         'name' => $instance['name'],
         'status' => 'started',
         'message' => 'Started',
-        'pid' => $pid,
+        'pid' => $realPid,
         'command' => preg_replace('/-k\s+\S+/', '-k ***', build_command($instance)),
     ];
 }
