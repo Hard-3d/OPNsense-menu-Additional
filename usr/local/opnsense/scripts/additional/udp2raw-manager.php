@@ -404,15 +404,11 @@ function command_matches_instance(string $command, array $instance): bool
         return false;
     }
 
+    /*
+     * Listen (-l) must be unique. Matching only by listen makes status/stop
+     * resilient after remote/raw-mode/dev changes.
+     */
     if ($instance['listen'] !== '' && strpos($command, $instance['listen']) === false) {
-        return false;
-    }
-
-    if ($instance['remote'] !== '' && strpos($command, $instance['remote']) === false) {
-        return false;
-    }
-
-    if ($instance['raw_mode'] !== '' && strpos($command, $instance['raw_mode']) === false) {
         return false;
     }
 
@@ -456,6 +452,167 @@ function discover_pid(array $instance): int
     return 0;
 }
 
+function endpoint_port(string $endpoint): string
+{
+    $endpoint = trim($endpoint);
+
+    if ($endpoint === '') {
+        return '';
+    }
+
+    if (preg_match('/^\[[^\]]+\]:(\d+)$/', $endpoint, $m)) {
+        return $m[1];
+    }
+
+    if (preg_match('/:(\d+)$/', $endpoint, $m)) {
+        return $m[1];
+    }
+
+    return '';
+}
+
+function udp2raw_processes_by_listen(string $listen): array
+{
+    $items = [];
+
+    if ($listen === '') {
+        return $items;
+    }
+
+    $output = [];
+    $exitCode = 0;
+
+    exec('/bin/ps axww -o pid= -o command= 2>/dev/null', $output, $exitCode);
+
+    if ($exitCode !== 0) {
+        return $items;
+    }
+
+    $binaryBase = basename(BINARY_FILE);
+
+    foreach ($output as $line) {
+        $line = trim((string)$line);
+
+        if ($line === '' || !preg_match('/^(\d+)\s+(.+)$/', $line, $m)) {
+            continue;
+        }
+
+        $pid = (int)$m[1];
+        $command = (string)$m[2];
+
+        if ($pid <= 0 || $pid === getmypid()) {
+            continue;
+        }
+
+        if (strpos($command, 'udp2raw-manager.php') !== false) {
+            continue;
+        }
+
+        if (
+            (strpos($command, BINARY_FILE) !== false || strpos($command, $binaryBase) !== false) &&
+            strpos($command, $listen) !== false &&
+            is_pid_running($pid)
+        ) {
+            $items[] = [
+                'pid' => $pid,
+                'command' => $command,
+            ];
+        }
+    }
+
+    return $items;
+}
+
+function discover_pid_by_listen(array $instance): int
+{
+    $items = udp2raw_processes_by_listen((string)$instance['listen']);
+
+    if (!empty($items[0]['pid'])) {
+        return (int)$items[0]['pid'];
+    }
+
+    return 0;
+}
+
+function sockstat_lines_by_port(string $port): array
+{
+    $result = [];
+
+    if ($port === '') {
+        return $result;
+    }
+
+    if (!is_executable('/usr/bin/sockstat')) {
+        return $result;
+    }
+
+    $output = [];
+    $exitCode = 0;
+
+    exec('/usr/bin/sockstat -l 2>/dev/null', $output, $exitCode);
+
+    if ($exitCode !== 0) {
+        return $result;
+    }
+
+    foreach ($output as $line) {
+        $line = trim((string)$line);
+
+        if ($line === '') {
+            continue;
+        }
+
+        /*
+         * FreeBSD sockstat may show 127.0.0.1:51821, *.51821 or [::1]:51821.
+         */
+        if (
+            preg_match('/[:.]' . preg_quote($port, '/') . '(?:\s|$)/', $line) ||
+            preg_match('/\*:' . preg_quote($port, '/') . '(?:\s|$)/', $line)
+        ) {
+            $result[] = $line;
+        }
+    }
+
+    return $result;
+}
+
+function listen_bind_diagnostics(array $instance): array
+{
+    $listen = (string)$instance['listen'];
+    $port = endpoint_port($listen);
+    $udp2rawProcesses = udp2raw_processes_by_listen($listen);
+    $sockstatLines = sockstat_lines_by_port($port);
+
+    return [
+        'listen' => $listen,
+        'port' => $port,
+        'busy' => !empty($udp2rawProcesses) || !empty($sockstatLines),
+        'udp2raw_processes' => $udp2rawProcesses,
+        'sockstat' => $sockstatLines,
+    ];
+}
+
+function bind_diagnostics_message(array $instance, array $diagnostics): string
+{
+    $message = 'Listen port занят: ' . (string)$diagnostics['listen'] . '. ';
+
+    if (!empty($diagnostics['udp2raw_processes'])) {
+        $parts = [];
+        foreach ($diagnostics['udp2raw_processes'] as $item) {
+            $parts[] = 'PID ' . $item['pid'];
+        }
+        $message .= 'Найден уже запущенный udp2raw: ' . implode(', ', $parts) . '. ';
+    }
+
+    if (!empty($diagnostics['sockstat'])) {
+        $message .= 'sockstat: ' . implode(' | ', array_slice($diagnostics['sockstat'], 0, 5)) . '. ';
+    }
+
+    $message .= 'Остановите старый процесс или выберите другой Listen (-l) порт.';
+
+    return $message;
+}
+
 function save_pid(array $instance, int $pid): void
 {
     if ($pid <= 0) {
@@ -487,6 +644,13 @@ function current_pid(array $instance): int
     if ($discovered > 0) {
         save_pid($instance, $discovered);
         return $discovered;
+    }
+
+    $byListen = discover_pid_by_listen($instance);
+
+    if ($byListen > 0) {
+        save_pid($instance, $byListen);
+        return $byListen;
     }
 
     return 0;
@@ -522,6 +686,8 @@ function instance_status(array $instance): array
         $pid = 0;
     }
 
+    $bindDiagnostics = listen_bind_diagnostics($instance);
+
     return [
         'id' => $instance['id'],
         'name' => $instance['name'],
@@ -537,6 +703,7 @@ function instance_status(array $instance): array
         'pid_file' => pid_file($instance),
         'log_file' => log_file($instance),
         'last_log' => $running ? '' : log_tail($instance, 10),
+        'bind_diagnostics' => $bindDiagnostics,
     ];
 }
 
@@ -626,6 +793,23 @@ function start_instance(array $instance): array
 
     validate_instance_for_start($instance);
 
+    $existingByListen = discover_pid_by_listen($instance);
+    if ($existingByListen > 0) {
+        save_pid($instance, $existingByListen);
+        return [
+            'id' => $instance['id'],
+            'name' => $instance['name'],
+            'status' => 'already_running',
+            'message' => 'Already running on listen ' . $instance['listen'],
+            'pid' => $existingByListen,
+        ];
+    }
+
+    $diagnostics = listen_bind_diagnostics($instance);
+    if (!empty($diagnostics['sockstat'])) {
+        throw new RuntimeException(bind_diagnostics_message($instance, $diagnostics));
+    }
+
     $log = log_file($instance);
     @touch($log);
     @chmod($log, 0644);
@@ -660,10 +844,17 @@ function start_instance(array $instance): array
 
     if ($realPid <= 0) {
         $tail = log_tail($instance, 30);
+        $extra = '';
+
+        if (stripos($tail, 'socket bind error') !== false) {
+            $extra = '. ' . bind_diagnostics_message($instance, listen_bind_diagnostics($instance));
+        }
+
         throw new RuntimeException(
             'udp2raw стартовал, но рабочий процесс не найден после запуска: ' .
             $instance['name'] .
-            ($tail !== '' ? '. Последние строки лога: ' . $tail : '')
+            ($tail !== '' ? '. Последние строки лога: ' . $tail : '') .
+            $extra
         );
     }
 

@@ -138,6 +138,10 @@ $(document).ready(function() {
             return '<span class="label label-success">Работает, PID ' + item.pid + '</span>';
         }
 
+        if (item && item.bind_diagnostics && item.bind_diagnostics.busy) {
+            return '<span class="label label-warning" title="Listen port занят">Порт занят</span>';
+        }
+
         if (item && item.last_log) {
             return '<span class="label label-default" title="' + String(item.last_log).replace(/"/g, '&quot;') + '">Остановлен</span>';
         }
