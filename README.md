@@ -18,7 +18,7 @@
 
 ```sh
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.29-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.30-root.zip
 chmod 755 /install.sh
 /install.sh
 ```
@@ -45,14 +45,14 @@ usr/local/opnsense/...
 
 Пример:
 
-- tag: `v0.1.29`
-- asset: `opnsense-additional-menu-v0.1.29-root.zip`
+- tag: `v0.1.30`
+- asset: `opnsense-additional-menu-v0.1.30-root.zip`
 
 В самой странице **Update** укажите:
 
 ```text
 Repository URL: https://github.com/OWNER/REPO
-Release asset name: opnsense-additional-menu-v0.1.29-root.zip
+Release asset name: opnsense-additional-menu-v0.1.30-root.zip
 ```
 
 Если поле **Release asset name** оставить пустым, updater попробует установить GitHub source ZIP latest release. Это тоже поддерживается, если в корне репозитория есть `install.sh`.
@@ -68,7 +68,7 @@ Release asset name: opnsense-additional-menu-v0.1.29-root.zip
 Для новой версии:
 
 1. Измените файл `usr/local/opnsense/scripts/additional/VERSION`.
-2. Создайте новый git tag, например `v0.1.29`.
+2. Создайте новый git tag, например `v0.1.30`.
 3. Соберите новый root ZIP.
 4. Загрузите ZIP в GitHub Release.
 
@@ -81,110 +81,116 @@ Release asset name: opnsense-additional-menu-v0.1.29-root.zip
 
 После установки служебные файлы `install.sh`, `README.md`, `README_INSTALL.txt`, `.gitignore` удаляются из корня `/` и сохраняются в `/usr/local/opnsense/scripts/additional/package/`.
 
-## v0.1.29
+## v0.1.30
 
 - WireGuard check больше не требует API key/secret пользователя root.
 - Список WireGuard клиентов читается локально из `/conf/config.xml`.
 - Маршруты читаются через `netstat`, перезапуск WireGuard выполняется локальными командами `configctl`/`service`.
 
-## v0.1.29
+## v0.1.30
 
 - На странице Update увеличена ширина полей Repository URL и Release asset name.
 
-## v0.1.29
+## v0.1.30
 
 - Исправлен статус на странице Update после успешного обновления: если текущая версия совпадает с latest release, больше не отображается `Доступно обновление`.
 - Scheduler task `Update check` только проверяет наличие новой версии и не устанавливает обновление автоматически.
 
-## v0.1.29
+## v0.1.30
 
 - Добавлена галочка автообновления на странице Update.
 - Если автообновление включено, задача Scheduler `Update check` при обнаружении новой версии автоматически запускает установку обновления.
 - Если галочка выключена, Scheduler только проверяет наличие новой версии.
 
-## v0.1.29
+## v0.1.30
 
 - На странице Update добавлен Repository URL по умолчанию: `https://github.com/Hard-3d/OPNsense-menu-Additional`.
 - Default URL также используется скриптом обновления, если файл настроек ещё не создан.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: удалено создание совместимой копии `/usr/local/opnsense/scripts/udp2raw/udp2raw_wireguard`.
 - Используется только основной бинарник `/usr/local/opnsense/scripts/additional/bin/udp2raw_freebsd`.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: таблица instances заменена на карточки с адаптивной сеткой, чтобы настройки помещались без горизонтальной прокрутки.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: разделены кнопки сохранения. В блоке запуска теперь отдельная кнопка для общих настроек, в блоке Instances — отдельная кнопка для настроек instances.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: исправлено определение статуса после обновления страницы. Теперь PID определяется не только по pid-файлу, но и по реальному процессу udp2raw в `ps axww`.
 - После запуска manager проверяет, что рабочий процесс действительно остался запущенным.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: кнопки Start/Restart теперь сначала сохраняют текущие значения формы, затем запускают процесс.
 - udp2raw: для server mode добавлена явная проверка Dev (--dev), чтобы ошибка была понятной до запуска бинарника.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: поле Dev (--dev) теперь отображается только в режиме server.
 - udp2raw: Dev выбирается из выпадающего списка интерфейсов OPNsense, а не вводится вручную.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: в client mode Dev (--dev) автоматически определяется по маршруту до Remote через `route -n get`.
 - udp2raw: это исправляет ошибку `unknown pcap link type : 109`, когда бинарник сам выбирал неподходящий pcap-интерфейс.
 - udp2raw: ANSI-коды из лога очищаются перед выводом ошибки в Web UI.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: улучшен автодетект Dev в client mode. Если маршрут ведёт через lo/tun/wg/tailscale и т.п., используется fallback на физический default route interface.
 - udp2raw: добавлен ручной выбор Dev для client mode через чекбокс `Client Dev → Задать Dev вручную`.
 - udp2raw: лог instance очищается перед новой попыткой запуска, чтобы в ошибке не смешивались старые строки.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: убран пункт `Client Dev`. В client mode Dev больше не отображается и не настраивается вручную.
 - udp2raw: Dev по-прежнему показывается только для server mode, а в client mode определяется автоматически.
 
-## v0.1.29
+## v0.1.30
 
-- Rollback of v0.1.29: removed automatic udp2raw restart before WireGuard restart in Status WireGuard.
-- WireGuard check behavior returned to v0.1.29 logic: on degradation it restarts WireGuard only.
+- Rollback of v0.1.30: removed automatic udp2raw restart before WireGuard restart in Status WireGuard.
+- WireGuard check behavior returned to v0.1.30 logic: on degradation it restarts WireGuard only.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: добавлена диагностика `socket bind error`.
 - udp2raw: статус теперь ищет процесс не только по полной команде, но и по Listen (-l), чтобы старый процесс с тем же портом корректно определялся как запущенный.
 - udp2raw: если Listen-порт занят другим процессом, Web UI показывает понятную ошибку и строки sockstat.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: добавлено включаемое логирование подключений/работы udp2raw.
 - udp2raw: добавлена обязательная ротация логов по размеру с настраиваемым количеством архивов.
 - Ротация выполняется manager-скриптом методом copytruncate, чтобы работающий udp2raw не останавливался.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: логирование перенесено из общих настроек в каждый instance.
 - udp2raw: имя лог-файла теперь строится по имени подключения: `/var/log/additional_udp2raw_<connection-name>.log`.
 - udp2raw: в статусе instance отображается метка лог-файла и его размер, если логирование включено.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: подпись `Логирование` в карточке instance заменена на короткую `Log`.
 - udp2raw: поле `Log level` теперь скрывается, если для instance не включена галочка `Log`.
 
-## v0.1.29
+## v0.1.30
 
 - udp2raw: исправлено отображение поля `Log` в карточке instance. Убрана лишняя подпись возле checkbox, из-за которой рядом с `Extra args` отображалась буква `В`.
 
-## v0.1.29
+## v0.1.30
 
-- udp2raw: исправлена JS-ошибка формы из v0.1.28, из-за которой не загружались статус бинарника и карточки instances.
+- udp2raw: исправлена JS-ошибка формы из v0.1.30, из-за которой не загружались статус бинарника и карточки instances.
 - udp2raw: поле `Log` осталось компактным, без лишней подписи возле checkbox.
+
+## v0.1.30
+
+- updater: копируются только изменённые файлы, неизменённые файлы пропускаются.
+- updater: если в обновлении меняется `udp2raw_freebsd`, перед заменой бинарника udp2raw автоматически останавливается.
+- updater: если udp2raw был запущен до обновления бинарника, после установки он запускается обратно.

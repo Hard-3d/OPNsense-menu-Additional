@@ -5,6 +5,9 @@ const SCRIPT_NAME = 'additional-updater';
 const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/update_manager.json';
 const VERSION_FILE = '/usr/local/opnsense/scripts/additional/VERSION';
 const STATUS_FILE = '/var/run/additional_updater_status.json';
+const UDP2RAW_MANAGER_FILE = '/usr/local/opnsense/scripts/additional/udp2raw-manager.php';
+const UDP2RAW_BINARY_RELATIVE = 'usr/local/opnsense/scripts/additional/bin/udp2raw_freebsd';
+const UDP2RAW_BINARY_TARGET = '/usr/local/opnsense/scripts/additional/bin/udp2raw_freebsd';
 const DEFAULT_ASSET_NAME = '';
 
 function default_config(): array
@@ -399,6 +402,305 @@ function run_command(string $command): array
     ];
 }
 
+function parse_json_from_output(string $output): array
+{
+    $decoded = json_decode(trim($output), true);
+
+    if (is_array($decoded)) {
+        return $decoded;
+    }
+
+    $start = strpos($output, '{');
+    $end = strrpos($output, '}');
+
+    if ($start !== false && $end !== false && $end > $start) {
+        $decoded = json_decode(substr($output, $start, $end - $start + 1), true);
+
+        if (is_array($decoded)) {
+            return $decoded;
+        }
+    }
+
+    return [];
+}
+
+function files_are_different(string $src, string $dst): bool
+{
+    if (!is_file($src)) {
+        return false;
+    }
+
+    if (!is_file($dst)) {
+        return true;
+    }
+
+    $srcSize = filesize($src);
+    $dstSize = filesize($dst);
+
+    if ($srcSize !== $dstSize) {
+        return true;
+    }
+
+    $srcHash = hash_file('sha256', $src);
+    $dstHash = hash_file('sha256', $dst);
+
+    return $srcHash !== $dstHash;
+}
+
+function udp2raw_binary_source(string $installRoot): string
+{
+    return rtrim($installRoot, '/') . '/' . UDP2RAW_BINARY_RELATIVE;
+}
+
+function udp2raw_binary_update_needed(string $installRoot): bool
+{
+    $src = udp2raw_binary_source($installRoot);
+
+    if (!is_file($src)) {
+        return false;
+    }
+
+    return files_are_different($src, UDP2RAW_BINARY_TARGET);
+}
+
+function udp2raw_manager_command(string $arg): array
+{
+    if (!is_executable(UDP2RAW_MANAGER_FILE)) {
+        return [
+            'exit_code' => 127,
+            'output' => 'udp2raw-manager.php не найден или не исполняемый',
+        ];
+    }
+
+    return run_command(escapeshellcmd(UDP2RAW_MANAGER_FILE) . ' ' . $arg . ' --json');
+}
+
+function udp2raw_running_from_status(array $status): bool
+{
+    $instances = [];
+
+    if (isset($status['instances']) && is_array($status['instances'])) {
+        $instances = $status['instances'];
+    } elseif (isset($status['runtime']['instances']) && is_array($status['runtime']['instances'])) {
+        $instances = $status['runtime']['instances'];
+    }
+
+    foreach ($instances as $instance) {
+        if (!empty($instance['running'])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function udp2raw_binary_pids(): array
+{
+    $pids = [];
+    $output = [];
+    $exitCode = 0;
+
+    exec('/bin/ps axww -o pid= -o command= 2>/dev/null', $output, $exitCode);
+
+    if ($exitCode !== 0) {
+        return $pids;
+    }
+
+    foreach ($output as $line) {
+        $line = trim((string)$line);
+
+        if ($line === '' || !preg_match('/^(\d+)\s+(.+)$/', $line, $m)) {
+            continue;
+        }
+
+        $pid = (int)$m[1];
+        $command = (string)$m[2];
+
+        if ($pid <= 0 || $pid === getmypid()) {
+            continue;
+        }
+
+        if (
+            strpos($command, UDP2RAW_BINARY_TARGET) !== false ||
+            strpos($command, basename(UDP2RAW_BINARY_TARGET)) !== false
+        ) {
+            $pids[] = $pid;
+        }
+    }
+
+    return array_values(array_unique($pids));
+}
+
+function stop_udp2raw_for_binary_update(string $installRoot): array
+{
+    $result = [
+        'binary_in_package' => is_file(udp2raw_binary_source($installRoot)),
+        'binary_update_needed' => false,
+        'manager_available' => is_executable(UDP2RAW_MANAGER_FILE),
+        'was_running' => false,
+        'stopped' => false,
+        'killed_pids' => [],
+        'status_before' => null,
+        'stop_result' => null,
+    ];
+
+    if (!$result['binary_in_package']) {
+        return $result;
+    }
+
+    $result['binary_update_needed'] = udp2raw_binary_update_needed($installRoot);
+
+    if (!$result['binary_update_needed']) {
+        return $result;
+    }
+
+    if ($result['manager_available']) {
+        $statusRaw = udp2raw_manager_command('--status');
+        $statusData = parse_json_from_output($statusRaw['output']);
+        $result['status_before'] = [
+            'exit_code' => $statusRaw['exit_code'],
+            'decoded' => $statusData,
+        ];
+        $result['was_running'] = udp2raw_running_from_status($statusData);
+
+        /*
+         * Stop even if status did not detect running instances.
+         * It is safe, and it also handles stale pid files/config drift.
+         */
+        $stopRaw = udp2raw_manager_command('--stop-all');
+        $result['stop_result'] = [
+            'exit_code' => $stopRaw['exit_code'],
+            'output' => $stopRaw['output'],
+            'decoded' => parse_json_from_output($stopRaw['output']),
+        ];
+    }
+
+    /*
+     * Last-resort safety: if there are still udp2raw_freebsd processes,
+     * kill them before replacing the binary. Otherwise FreeBSD can return
+     * "Text file busy" / binary busy during copy.
+     */
+    $pids = udp2raw_binary_pids();
+    foreach ($pids as $pid) {
+        @exec('/bin/kill ' . escapeshellarg((string)$pid) . ' 2>/dev/null');
+    }
+
+    usleep(500000);
+
+    foreach (udp2raw_binary_pids() as $pid) {
+        @exec('/bin/kill -9 ' . escapeshellarg((string)$pid) . ' 2>/dev/null');
+        $result['killed_pids'][] = $pid;
+    }
+
+    $result['stopped'] = empty(udp2raw_binary_pids());
+
+    return $result;
+}
+
+function restart_udp2raw_after_binary_update(array $udp2rawUpdate): array
+{
+    if (
+        empty($udp2rawUpdate['binary_update_needed']) ||
+        empty($udp2rawUpdate['manager_available']) ||
+        empty($udp2rawUpdate['was_running'])
+    ) {
+        return [
+            'attempted' => false,
+            'reason' => 'not_needed',
+        ];
+    }
+
+    /*
+     * After copy/install the new manager is already in place.
+     */
+    $startRaw = udp2raw_manager_command('--start-all');
+
+    return [
+        'attempted' => true,
+        'exit_code' => $startRaw['exit_code'],
+        'output' => $startRaw['output'],
+        'decoded' => parse_json_from_output($startRaw['output']),
+    ];
+}
+
+function ensure_dir(string $dir): void
+{
+    if (is_dir($dir)) {
+        return;
+    }
+
+    if (!mkdir($dir, 0755, true) && !is_dir($dir)) {
+        throw new RuntimeException('Не удалось создать каталог: ' . $dir);
+    }
+}
+
+function copy_changed_tree(string $sourceRoot, string $destRoot): array
+{
+    $sourceRoot = rtrim($sourceRoot, '/');
+    $destRoot = rtrim($destRoot, '/');
+
+    $stats = [
+        'created_dirs' => 0,
+        'copied_files' => 0,
+        'skipped_files' => 0,
+        'failed_files' => [],
+    ];
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($sourceRoot, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        $src = $item->getPathname();
+        $rel = substr($src, strlen($sourceRoot) + 1);
+        $dst = ($destRoot === '' ? '' : $destRoot) . '/' . $rel;
+
+        if ($item->isDir() && !$item->isLink()) {
+            if (!is_dir($dst)) {
+                ensure_dir($dst);
+                $stats['created_dirs']++;
+            }
+            continue;
+        }
+
+        ensure_dir(dirname($dst));
+
+        if ($item->isLink()) {
+            if (file_exists($dst) || is_link($dst)) {
+                @unlink($dst);
+            }
+
+            if (!@symlink(readlink($src), $dst)) {
+                $stats['failed_files'][] = $rel;
+            } else {
+                $stats['copied_files']++;
+            }
+
+            continue;
+        }
+
+        if (is_file($dst) && !files_are_different($src, $dst)) {
+            $stats['skipped_files']++;
+            continue;
+        }
+
+        if (!@copy($src, $dst)) {
+            $stats['failed_files'][] = $rel;
+            continue;
+        }
+
+        @chmod($dst, fileperms($src) & 0777);
+        $stats['copied_files']++;
+    }
+
+    if (!empty($stats['failed_files'])) {
+        throw new RuntimeException('Не удалось скопировать файлы: ' . implode(', ', array_slice($stats['failed_files'], 0, 20)));
+    }
+
+    return $stats;
+}
+
 function download_file(string $url, string $destination): void
 {
     $curl = '/usr/local/bin/curl';
@@ -516,14 +818,9 @@ function perform_update(array $info): array
 
     $installRoot = find_install_root($extractDir);
 
-    $copyResult = run_command(sprintf(
-        '/bin/cp -R %s/. /',
-        escapeshellarg($installRoot)
-    ));
+    $udp2rawUpdate = stop_udp2raw_for_binary_update($installRoot);
 
-    if ($copyResult['exit_code'] !== 0) {
-        throw new RuntimeException('Не удалось скопировать файлы обновления: ' . $copyResult['output']);
-    }
+    $copyStats = copy_changed_tree($installRoot, '');
 
     @chmod('/install.sh', 0755);
 
@@ -533,6 +830,8 @@ function perform_update(array $info): array
         throw new RuntimeException('install.sh завершился с ошибкой: ' . $installResult['output']);
     }
 
+    $udp2rawRestart = restart_udp2raw_after_binary_update($udp2rawUpdate);
+
     @file_put_contents(VERSION_FILE, $info['latest_version'] . "\n", LOCK_EX);
     @chmod(VERSION_FILE, 0644);
 
@@ -541,6 +840,9 @@ function perform_update(array $info): array
     return [
         'install_output' => $installResult['output'],
         'installed_from' => $installRoot,
+        'copy_stats' => $copyStats,
+        'udp2raw_update' => $udp2rawUpdate,
+        'udp2raw_restart' => $udp2rawRestart,
     ];
 }
 
@@ -570,6 +872,9 @@ try {
         'current_version' => $info['latest_version'],
         'latest_version' => $info['latest_version'],
         'install_output' => $updateInfo['install_output'],
+        'copy_stats' => $updateInfo['copy_stats'] ?? null,
+        'udp2raw_update' => $updateInfo['udp2raw_update'] ?? null,
+        'udp2raw_restart' => $updateInfo['udp2raw_restart'] ?? null,
     ]);
 
     save_status($result);
