@@ -93,6 +93,13 @@
         margin-bottom: 6px;
     }
 
+    .udp2raw-log-settings input[type="text"] {
+        width: 120px !important;
+        display: inline-block;
+        margin-left: 8px;
+        margin-right: 14px;
+    }
+
     .additional-page .table {
         margin-bottom: 0;
     }
@@ -283,6 +290,9 @@ $(document).ready(function() {
         config = config || {};
         $("#udp2raw_autostart").prop("checked", bool01(config.autostart));
         $("#udp2raw_watchdog").prop("checked", bool01(config.watchdog));
+        $("#udp2raw_connection_logging").prop("checked", bool01(config.connection_logging));
+        $("#udp2raw_log_rotate_size_kb").val(config.log_rotate_size_kb || "1024");
+        $("#udp2raw_log_rotate_keep").val(config.log_rotate_keep || "5");
         $("#udp2raw_instances").empty();
 
         var instances = config.instances || [];
@@ -328,6 +338,9 @@ $(document).ready(function() {
         return {
             autostart: $("#udp2raw_autostart").is(":checked") ? "1" : "0",
             watchdog: $("#udp2raw_watchdog").is(":checked") ? "1" : "0",
+            connection_logging: $("#udp2raw_connection_logging").is(":checked") ? "1" : "0",
+            log_rotate_size_kb: $("#udp2raw_log_rotate_size_kb").val(),
+            log_rotate_keep: $("#udp2raw_log_rotate_keep").val(),
             instances: instances
         };
     }
@@ -437,10 +450,33 @@ $(document).ready(function() {
                 <th>Watchdog через Scheduler</th>
                 <td><label><input type="checkbox" id="udp2raw_watchdog"> Перезапускать включённые instance, если процесс не найден</label></td>
             </tr>
+            <tr>
+                <th>Логирование udp2raw</th>
+                <td>
+                    <label><input type="checkbox" id="udp2raw_connection_logging"> Вести лог подключений/работы udp2raw</label>
+                    <div class="help-block">
+                        Лог пишется в <code>/var/log/additional_udp2raw_&lt;instance&gt;.log</code>.
+                        При выключенной галочке лог очищается при каждом запуске instance.
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <th>Ротация логов</th>
+                <td class="udp2raw-log-settings">
+                    Размер:
+                    <input type="text" id="udp2raw_log_rotate_size_kb" class="form-control" value="1024">
+                    KB
+                    Хранить архивов:
+                    <input type="text" id="udp2raw_log_rotate_keep" class="form-control" value="5">
+                    <div class="help-block">
+                        Ротация выполняется автоматически manager-скриптом. Используется copytruncate, поэтому работающий udp2raw не нужно останавливать.
+                    </div>
+                </td>
+            </tr>
         </table>
 
         <div class="help-block">
-            Эта кнопка сохраняет только общую логику запуска: Autostart и Watchdog. Настройки instances сохраняются отдельной кнопкой в блоке ниже.
+            Эта кнопка сохраняет только общую логику запуска: Autostart, Watchdog и настройки логирования. Настройки instances сохраняются отдельной кнопкой в блоке ниже.
         </div>
 
         <br>

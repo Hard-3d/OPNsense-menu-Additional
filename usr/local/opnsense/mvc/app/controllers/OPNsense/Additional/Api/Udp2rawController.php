@@ -33,6 +33,9 @@ class Udp2rawController extends ApiControllerBase
         return [
             'autostart' => '0',
             'watchdog' => '0',
+            'connection_logging' => '0',
+            'log_rotate_size_kb' => '1024',
+            'log_rotate_keep' => '5',
             'instances' => [$this->defaultInstance()],
         ];
     }
@@ -45,6 +48,23 @@ class Udp2rawController extends ApiControllerBase
 
         $value = strtolower(trim((string)$value));
         return in_array($value, ['1', 'true', 'yes', 'on'], true) ? '1' : '0';
+    }
+
+    private function positiveIntString($value, int $default, int $min, int $max): string
+    {
+        $value = trim((string)$value);
+
+        if (!ctype_digit($value)) {
+            return (string)$default;
+        }
+
+        $intValue = (int)$value;
+
+        if ($intValue < $min || $intValue > $max) {
+            return (string)$default;
+        }
+
+        return (string)$intValue;
     }
 
     private function safeId(string $value): string
@@ -128,6 +148,9 @@ class Udp2rawController extends ApiControllerBase
         return [
             'autostart' => $this->bool01($config['autostart'] ?? '0'),
             'watchdog' => $this->bool01($config['watchdog'] ?? '0'),
+            'connection_logging' => $this->bool01($config['connection_logging'] ?? '0'),
+            'log_rotate_size_kb' => $this->positiveIntString($config['log_rotate_size_kb'] ?? '1024', 1024, 64, 1048576),
+            'log_rotate_keep' => $this->positiveIntString($config['log_rotate_keep'] ?? '5', 5, 1, 50),
             'instances' => $instances,
         ];
     }
@@ -137,6 +160,9 @@ class Udp2rawController extends ApiControllerBase
         $config = [
             'autostart' => $this->bool01($payload['autostart'] ?? '0'),
             'watchdog' => $this->bool01($payload['watchdog'] ?? '0'),
+            'connection_logging' => $this->bool01($payload['connection_logging'] ?? '0'),
+            'log_rotate_size_kb' => $this->positiveIntString($payload['log_rotate_size_kb'] ?? '1024', 1024, 64, 1048576),
+            'log_rotate_keep' => $this->positiveIntString($payload['log_rotate_keep'] ?? '5', 5, 1, 50),
             'instances' => [],
         ];
 

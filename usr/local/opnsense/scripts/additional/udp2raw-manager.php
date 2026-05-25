@@ -32,6 +32,9 @@ function default_config(): array
     return [
         'autostart' => '0',
         'watchdog' => '0',
+        'connection_logging' => '0',
+        'log_rotate_size_kb' => '1024',
+        'log_rotate_keep' => '5',
         'instances' => [default_instance()],
     ];
 }
@@ -44,6 +47,23 @@ function bool01($value): string
 
     $value = strtolower(trim((string)$value));
     return in_array($value, ['1', 'true', 'yes', 'on'], true) ? '1' : '0';
+}
+
+function positive_int_string($value, int $default, int $min, int $max): string
+{
+    $value = trim((string)$value);
+
+    if (!ctype_digit($value)) {
+        return (string)$default;
+    }
+
+    $intValue = (int)$value;
+
+    if ($intValue < $min || $intValue > $max) {
+        return (string)$default;
+    }
+
+    return (string)$intValue;
 }
 
 function safe_id(string $value): string
@@ -326,6 +346,9 @@ function load_config(): array
     return [
         'autostart' => bool01($config['autostart'] ?? '0'),
         'watchdog' => bool01($config['watchdog'] ?? '0'),
+        'connection_logging' => bool01($config['connection_logging'] ?? '0'),
+        'log_rotate_size_kb' => positive_int_string($config['log_rotate_size_kb'] ?? '1024', 1024, 64, 1048576),
+        'log_rotate_keep' => positive_int_string($config['log_rotate_keep'] ?? '5', 5, 1, 50),
         'instances' => $instances,
     ];
 }
@@ -335,6 +358,9 @@ function save_config(array $config): array
     $normalized = [
         'autostart' => bool01($config['autostart'] ?? '0'),
         'watchdog' => bool01($config['watchdog'] ?? '0'),
+        'connection_logging' => bool01($config['connection_logging'] ?? '0'),
+        'log_rotate_size_kb' => positive_int_string($config['log_rotate_size_kb'] ?? '1024', 1024, 64, 1048576),
+        'log_rotate_keep' => positive_int_string($config['log_rotate_keep'] ?? '5', 5, 1, 50),
         'instances' => [],
     ];
 
@@ -377,6 +403,124 @@ function pid_file(array $instance): string
 function log_file(array $instance): string
 {
     return LOG_DIR . '/additional_udp2raw_' . safe_id((string)$instance['id']) . '.log';
+}
+
+function log_rotated_file(array $instance, int $index): string
+{
+    return log_file($instance) . '.' . $index;
+}
+
+function rotate_log_if_needed(array $config, array $instance): array
+{
+    $enabled = bool01($config['connection_logging'] ?? '0') === '1';
+    $file = log_file($instance);
+
+    if (!$enabled) {
+        return [
+            'enabled' => false,
+            'rotated' => false,
+            'file' => $file,
+        ];
+    }
+
+    $maxBytes = max(64, (int)($config['log_rotate_size_kb'] ?? 1024)) * 1024;
+    $keep = max(1, min(50, (int)($config['log_rotate_keep'] ?? 5)));
+
+    if (!is_file($file)) {
+        return [
+            'enabled' => true,
+            'rotated' => false,
+            'file' => $file,
+            'max_bytes' => $maxBytes,
+            'keep' => $keep,
+        ];
+    }
+
+    $size = filesize($file);
+    if ($size === false || $size < $maxBytes) {
+        return [
+            'enabled' => true,
+            'rotated' => false,
+            'file' => $file,
+            'size' => $size,
+            'max_bytes' => $maxBytes,
+            'keep' => $keep,
+        ];
+    }
+
+    /*
+     * copytruncate rotation: a running udp2raw keeps writing to the same log inode.
+     * We copy current log to .1 and truncate original file instead of renaming it.
+     */
+    $last = log_rotated_file($instance, $keep);
+    if (is_file($last)) {
+        @unlink($last);
+    }
+
+    for ($i = $keep - 1; $i >= 1; $i--) {
+        $src = log_rotated_file($instance, $i);
+        $dst = log_rotated_file($instance, $i + 1);
+
+        if (is_file($src)) {
+            @rename($src, $dst);
+        }
+    }
+
+    @copy($file, log_rotated_file($instance, 1));
+    @file_put_contents($file, '');
+    @chmod($file, 0644);
+
+    return [
+        'enabled' => true,
+        'rotated' => true,
+        'file' => $file,
+        'size' => $size,
+        'max_bytes' => $maxBytes,
+        'keep' => $keep,
+    ];
+}
+
+function rotate_all_logs_if_needed(array $config): array
+{
+    $items = [];
+
+    if (!isset($config['instances']) || !is_array($config['instances'])) {
+        return $items;
+    }
+
+    foreach ($config['instances'] as $instance) {
+        if (is_array($instance)) {
+            $items[] = rotate_log_if_needed($config, $instance);
+        }
+    }
+
+    return $items;
+}
+
+function log_rotation_status(array $config, array $instance): array
+{
+    $file = log_file($instance);
+    $rotated = [];
+    $keep = max(1, min(50, (int)($config['log_rotate_keep'] ?? 5)));
+
+    for ($i = 1; $i <= $keep; $i++) {
+        $path = log_rotated_file($instance, $i);
+        if (is_file($path)) {
+            $rotated[] = [
+                'file' => $path,
+                'size' => filesize($path) ?: 0,
+            ];
+        }
+    }
+
+    return [
+        'connection_logging' => bool01($config['connection_logging'] ?? '0'),
+        'file' => $file,
+        'size' => is_file($file) ? (filesize($file) ?: 0) : 0,
+        'rotate_size_kb' => positive_int_string($config['log_rotate_size_kb'] ?? '1024', 1024, 64, 1048576),
+        'rotate_keep' => positive_int_string($config['log_rotate_keep'] ?? '5', 5, 1, 50),
+        'rotated' => $rotated,
+    ];
 }
 
 function is_pid_running(int $pid): bool
@@ -676,7 +820,7 @@ function log_tail(array $instance, int $lines = 20): string
     return strip_ansi(trim(implode("\n", $output)));
 }
 
-function instance_status(array $instance): array
+function instance_status(array $instance, ?array $config = null): array
 {
     $pid = current_pid($instance);
     $running = is_pid_running($pid);
@@ -704,6 +848,7 @@ function instance_status(array $instance): array
         'log_file' => log_file($instance),
         'last_log' => $running ? '' : log_tail($instance, 10),
         'bind_diagnostics' => $bindDiagnostics,
+        'log_rotation' => $config !== null ? log_rotation_status($config, $instance) : null,
     ];
 }
 
@@ -769,7 +914,7 @@ function build_command(array $instance): string
     return implode(' ', $parts);
 }
 
-function start_instance(array $instance): array
+function start_instance(array $instance, ?array $config = null): array
 {
     if ($instance['enabled'] !== '1') {
         return [
@@ -780,7 +925,7 @@ function start_instance(array $instance): array
         ];
     }
 
-    $status = instance_status($instance);
+    $status = instance_status($instance, $config);
     if ($status['running']) {
         return [
             'id' => $instance['id'],
@@ -810,10 +955,17 @@ function start_instance(array $instance): array
         throw new RuntimeException(bind_diagnostics_message($instance, $diagnostics));
     }
 
+    if ($config !== null) {
+        rotate_log_if_needed($config, $instance);
+    }
+
     $log = log_file($instance);
     @touch($log);
     @chmod($log, 0644);
-    @file_put_contents($log, '');
+
+    if ($config === null || bool01($config['connection_logging'] ?? '0') !== '1') {
+        @file_put_contents($log, '');
+    }
 
     $command = sprintf(
         'nohup %s >> %s 2>&1 & echo $!',
@@ -914,9 +1066,11 @@ function find_instance(array $config, string $id): ?array
 
 function all_status(array $config): array
 {
+    rotate_all_logs_if_needed($config);
+
     $items = [];
     foreach ($config['instances'] as $instance) {
-        $items[] = instance_status($instance);
+        $items[] = instance_status($instance, $config);
     }
 
     return $items;
@@ -1011,7 +1165,7 @@ try {
 
     if (in_array($args['action'], ['start_all', 'autostart', 'watchdog'], true)) {
         foreach ($config['instances'] as $instance) {
-            $result['results'][] = start_instance($instance);
+            $result['results'][] = start_instance($instance, $config);
         }
     } elseif ($args['action'] === 'stop_all') {
         foreach ($config['instances'] as $instance) {
@@ -1020,7 +1174,7 @@ try {
     } elseif ($args['action'] === 'restart_all') {
         foreach ($config['instances'] as $instance) {
             $result['results'][] = stop_instance($instance);
-            $result['results'][] = start_instance($instance);
+            $result['results'][] = start_instance($instance, $config);
         }
     } elseif (in_array($args['action'], ['start', 'stop', 'restart'], true)) {
         $instance = find_instance($config, $args['id']);
@@ -1029,12 +1183,12 @@ try {
         }
 
         if ($args['action'] === 'start') {
-            $result['results'][] = start_instance($instance);
+            $result['results'][] = start_instance($instance, $config);
         } elseif ($args['action'] === 'stop') {
             $result['results'][] = stop_instance($instance);
         } else {
             $result['results'][] = stop_instance($instance);
-            $result['results'][] = start_instance($instance);
+            $result['results'][] = start_instance($instance, $config);
         }
     }
 
