@@ -294,7 +294,7 @@ $(document).ready(function() {
             .val(instance.raw_mode || "easyfaketcp");
         var dev = buildDevSelect((instance.mode || "client") === "server" ? (instance.dev || "") : "");
         var connectionLogging = $('<label class="udp2raw-log-toggle" title="Вести лог для этого instance">')
-            .append($($1).prop("checked", bool01(instance.connection_logging)));
+            .append($('<input type="checkbox" class="udp2raw-connection-logging">').prop("checked", bool01(instance.connection_logging)));
         var logLevel = $('<input type="text" class="form-control udp2raw-log-level">').val(instance.log_level || "3");
         var extra = $('<input type="text" class="form-control udp2raw-extra" placeholder="доп. параметры">').val(instance.extra_args || "");
         var del = $('<button type="button" class="btn btn-xs btn-danger udp2raw-delete"><i class="fa fa-trash"></i> Удалить</button>');
