@@ -140,20 +140,34 @@ $(document).ready(function() {
         return value === "1" || value === 1 || value === true;
     }
 
+    function logInfoLabel(item) {
+        if (!item || !item.log_rotation || item.log_rotation.connection_logging !== "1") {
+            return "";
+        }
+
+        var file = item.log_rotation.file || "";
+        var name = item.log_rotation.connection_name || "";
+        var size = item.log_rotation.size ? Math.round(item.log_rotation.size / 1024) + " KB" : "0 KB";
+
+        return ' <span class="label label-info" title="' + file.replace(/"/g, '&quot;') + '">Лог: ' + name + ' / ' + size + '</span>';
+    }
+
     function statusLabel(item) {
+        var logLabel = logInfoLabel(item);
+
         if (item && item.running) {
-            return '<span class="label label-success">Работает, PID ' + item.pid + '</span>';
+            return '<span class="label label-success">Работает, PID ' + item.pid + '</span>' + logLabel;
         }
 
         if (item && item.bind_diagnostics && item.bind_diagnostics.busy) {
-            return '<span class="label label-warning" title="Listen port занят">Порт занят</span>';
+            return '<span class="label label-warning" title="Listen port занят">Порт занят</span>' + logLabel;
         }
 
         if (item && item.last_log) {
-            return '<span class="label label-default" title="' + String(item.last_log).replace(/"/g, '&quot;') + '">Остановлен</span>';
+            return '<span class="label label-default" title="' + String(item.last_log).replace(/"/g, '&quot;') + '">Остановлен</span>' + logLabel;
         }
 
-        return '<span class="label label-default">Остановлен</span>';
+        return '<span class="label label-default">Остановлен</span>' + logLabel;
     }
 
     function updateRuntimeMap(runtime) {
@@ -260,6 +274,9 @@ $(document).ready(function() {
             .append('<option value="icmp">icmp</option>')
             .val(instance.raw_mode || "easyfaketcp");
         var dev = buildDevSelect((instance.mode || "client") === "server" ? (instance.dev || "") : "");
+        var connectionLogging = $('<label style="font-weight: normal; margin-top: 8px;">')
+            .append($('<input type="checkbox" class="udp2raw-connection-logging">').prop("checked", bool01(instance.connection_logging)))
+            .append(" Вести лог");
         var logLevel = $('<input type="text" class="form-control udp2raw-log-level">').val(instance.log_level || "3");
         var extra = $('<input type="text" class="form-control udp2raw-extra" placeholder="доп. параметры">').val(instance.extra_args || "");
         var del = $('<button type="button" class="btn btn-xs btn-danger udp2raw-delete"><i class="fa fa-trash"></i> Удалить</button>');
@@ -272,7 +289,8 @@ $(document).ready(function() {
         grid.append(fieldBlock("Key (-k)", key, "udp2raw-field-wide"));
         grid.append(fieldBlock("Raw mode", rawMode));
         grid.append(fieldBlock("Dev (--dev)", dev, "udp2raw-dev-field"));
-        grid.append(fieldBlock("Log", logLevel));
+        grid.append(fieldBlock("Логирование", connectionLogging));
+        grid.append(fieldBlock("Log level", logLevel));
         grid.append(fieldBlock("Extra args", extra, "udp2raw-field-wide"));
         grid.append($('<div class="udp2raw-actions">').append(del));
 
@@ -290,7 +308,6 @@ $(document).ready(function() {
         config = config || {};
         $("#udp2raw_autostart").prop("checked", bool01(config.autostart));
         $("#udp2raw_watchdog").prop("checked", bool01(config.watchdog));
-        $("#udp2raw_connection_logging").prop("checked", bool01(config.connection_logging));
         $("#udp2raw_log_rotate_size_kb").val(config.log_rotate_size_kb || "1024");
         $("#udp2raw_log_rotate_keep").val(config.log_rotate_keep || "5");
         $("#udp2raw_instances").empty();
@@ -330,6 +347,7 @@ $(document).ready(function() {
                 key: card.find(".udp2raw-key").val(),
                 raw_mode: card.find(".udp2raw-raw-mode").val(),
                 dev: card.find(".udp2raw-mode").val() === "server" ? card.find(".udp2raw-dev").val() : "",
+                connection_logging: card.find(".udp2raw-connection-logging").is(":checked") ? "1" : "0",
                 log_level: card.find(".udp2raw-log-level").val(),
                 extra_args: card.find(".udp2raw-extra").val()
             });
@@ -338,7 +356,6 @@ $(document).ready(function() {
         return {
             autostart: $("#udp2raw_autostart").is(":checked") ? "1" : "0",
             watchdog: $("#udp2raw_watchdog").is(":checked") ? "1" : "0",
-            connection_logging: $("#udp2raw_connection_logging").is(":checked") ? "1" : "0",
             log_rotate_size_kb: $("#udp2raw_log_rotate_size_kb").val(),
             log_rotate_keep: $("#udp2raw_log_rotate_keep").val(),
             instances: instances
@@ -386,6 +403,7 @@ $(document).ready(function() {
             key: "",
             raw_mode: "easyfaketcp",
             dev: "",
+            connection_logging: "0",
             log_level: "3",
             extra_args: ""
         });
@@ -451,16 +469,6 @@ $(document).ready(function() {
                 <td><label><input type="checkbox" id="udp2raw_watchdog"> Перезапускать включённые instance, если процесс не найден</label></td>
             </tr>
             <tr>
-                <th>Логирование udp2raw</th>
-                <td>
-                    <label><input type="checkbox" id="udp2raw_connection_logging"> Вести лог подключений/работы udp2raw</label>
-                    <div class="help-block">
-                        Лог пишется в <code>/var/log/additional_udp2raw_&lt;instance&gt;.log</code>.
-                        При выключенной галочке лог очищается при каждом запуске instance.
-                    </div>
-                </td>
-            </tr>
-            <tr>
                 <th>Ротация логов</th>
                 <td class="udp2raw-log-settings">
                     Размер:
@@ -469,14 +477,14 @@ $(document).ready(function() {
                     Хранить архивов:
                     <input type="text" id="udp2raw_log_rotate_keep" class="form-control" value="5">
                     <div class="help-block">
-                        Ротация выполняется автоматически manager-скриптом. Используется copytruncate, поэтому работающий udp2raw не нужно останавливать.
+                        Ротация применяется к тем instance, где включена галочка «Логирование». Имя файла строится по имени подключения.
                     </div>
                 </td>
             </tr>
         </table>
 
         <div class="help-block">
-            Эта кнопка сохраняет только общую логику запуска: Autostart, Watchdog и настройки логирования. Настройки instances сохраняются отдельной кнопкой в блоке ниже.
+            Эта кнопка сохраняет только общую логику запуска: Autostart, Watchdog и общие параметры ротации логов. Настройки instances сохраняются отдельной кнопкой в блоке ниже.
         </div>
 
         <br>
@@ -496,12 +504,13 @@ $(document).ready(function() {
             Поле <b>Dev (--dev)</b> показывается только для server mode и выбирается из интерфейсов OPNsense.
             В client mode интерфейс определяется автоматически по маршруту до <b>Remote</b>.
             Для WireGuard обычно endpoint указывается на локальный порт udp2raw, например <code>127.0.0.1:51821</code>.
+            Логирование включается отдельно на каждом instance, файл называется по имени подключения.
         </div>
 
         <div id="udp2raw_instances"></div>
 
         <div class="help-block">
-            Эта кнопка сохраняет настройки всех udp2raw instances: режим, listen, remote, key, raw-mode, dev, log и дополнительные параметры.
+            Эта кнопка сохраняет настройки всех udp2raw instances: режим, listen, remote, key, raw-mode, dev, логирование, log level и дополнительные параметры.
         </div>
 
         <button id="btn_udp2raw_save_instances" type="button" class="btn btn-default"><i class="fa fa-save"></i> Сохранить instances</button>

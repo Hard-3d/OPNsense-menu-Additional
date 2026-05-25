@@ -22,6 +22,7 @@ function default_instance(): array
         'key' => '',
         'raw_mode' => 'easyfaketcp',
         'dev' => '',
+        'connection_logging' => '0',
         'log_level' => '3',
         'extra_args' => '',
     ];
@@ -32,7 +33,6 @@ function default_config(): array
     return [
         'autostart' => '0',
         'watchdog' => '0',
-        'connection_logging' => '0',
         'log_rotate_size_kb' => '1024',
         'log_rotate_keep' => '5',
         'instances' => [default_instance()],
@@ -312,6 +312,7 @@ function normalize_instance(array $item, int $index = 0): array
         'key' => (string)$item['key'],
         'raw_mode' => $rawMode,
         'dev' => trim((string)$item['dev']),
+        'connection_logging' => bool01($item['connection_logging'] ?? '0'),
         'log_level' => $logLevel,
         'extra_args' => trim((string)$item['extra_args']),
     ];
@@ -334,6 +335,10 @@ function load_config(): array
     if (isset($config['instances']) && is_array($config['instances'])) {
         foreach (array_values($config['instances']) as $index => $instance) {
             if (is_array($instance)) {
+                if (!array_key_exists('connection_logging', $instance) && array_key_exists('connection_logging', $config)) {
+                    $instance['connection_logging'] = $config['connection_logging'];
+                }
+
                 $instances[] = normalize_instance($instance, $index);
             }
         }
@@ -346,7 +351,6 @@ function load_config(): array
     return [
         'autostart' => bool01($config['autostart'] ?? '0'),
         'watchdog' => bool01($config['watchdog'] ?? '0'),
-        'connection_logging' => bool01($config['connection_logging'] ?? '0'),
         'log_rotate_size_kb' => positive_int_string($config['log_rotate_size_kb'] ?? '1024', 1024, 64, 1048576),
         'log_rotate_keep' => positive_int_string($config['log_rotate_keep'] ?? '5', 5, 1, 50),
         'instances' => $instances,
@@ -358,7 +362,6 @@ function save_config(array $config): array
     $normalized = [
         'autostart' => bool01($config['autostart'] ?? '0'),
         'watchdog' => bool01($config['watchdog'] ?? '0'),
-        'connection_logging' => bool01($config['connection_logging'] ?? '0'),
         'log_rotate_size_kb' => positive_int_string($config['log_rotate_size_kb'] ?? '1024', 1024, 64, 1048576),
         'log_rotate_keep' => positive_int_string($config['log_rotate_keep'] ?? '5', 5, 1, 50),
         'instances' => [],
@@ -400,9 +403,20 @@ function pid_file(array $instance): string
     return PID_DIR . '/additional_udp2raw_' . safe_id((string)$instance['id']) . '.pid';
 }
 
+function log_connection_name(array $instance): string
+{
+    $name = trim((string)($instance['name'] ?? ''));
+
+    if ($name === '') {
+        $name = trim((string)($instance['id'] ?? 'default'));
+    }
+
+    return safe_id($name);
+}
+
 function log_file(array $instance): string
 {
-    return LOG_DIR . '/additional_udp2raw_' . safe_id((string)$instance['id']) . '.log';
+    return LOG_DIR . '/additional_udp2raw_' . log_connection_name($instance) . '.log';
 }
 
 function log_rotated_file(array $instance, int $index): string
@@ -412,7 +426,7 @@ function log_rotated_file(array $instance, int $index): string
 
 function rotate_log_if_needed(array $config, array $instance): array
 {
-    $enabled = bool01($config['connection_logging'] ?? '0') === '1';
+    $enabled = bool01($instance['connection_logging'] ?? '0') === '1';
     $file = log_file($instance);
 
     if (!$enabled) {
@@ -514,7 +528,8 @@ function log_rotation_status(array $config, array $instance): array
     }
 
     return [
-        'connection_logging' => bool01($config['connection_logging'] ?? '0'),
+        'connection_logging' => bool01($instance['connection_logging'] ?? '0'),
+        'connection_name' => log_connection_name($instance),
         'file' => $file,
         'size' => is_file($file) ? (filesize($file) ?: 0) : 0,
         'rotate_size_kb' => positive_int_string($config['log_rotate_size_kb'] ?? '1024', 1024, 64, 1048576),
@@ -963,7 +978,7 @@ function start_instance(array $instance, ?array $config = null): array
     @touch($log);
     @chmod($log, 0644);
 
-    if ($config === null || bool01($config['connection_logging'] ?? '0') !== '1') {
+    if (bool01($instance['connection_logging'] ?? '0') !== '1') {
         @file_put_contents($log, '');
     }
 
