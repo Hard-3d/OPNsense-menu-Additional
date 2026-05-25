@@ -84,7 +84,8 @@
         gap: 6px;
     }
 
-    .udp2raw-dev-field.is-hidden {
+    .udp2raw-dev-field.is-hidden,
+    .udp2raw-log-level-field.is-hidden {
         display: none;
     }
 
@@ -247,6 +248,17 @@ $(document).ready(function() {
         }
     }
 
+    function updateLogLevelVisibility(card) {
+        var loggingEnabled = card.find(".udp2raw-connection-logging").is(":checked");
+        var logLevelField = card.find(".udp2raw-log-level-field");
+
+        if (loggingEnabled) {
+            logLevelField.removeClass("is-hidden");
+        } else {
+            logLevelField.addClass("is-hidden");
+        }
+    }
+
     function addInstanceRow(instance) {
         instance = instance || {};
         var id = instance.id || ("instance_" + (new Date().getTime()));
@@ -289,8 +301,8 @@ $(document).ready(function() {
         grid.append(fieldBlock("Key (-k)", key, "udp2raw-field-wide"));
         grid.append(fieldBlock("Raw mode", rawMode));
         grid.append(fieldBlock("Dev (--dev)", dev, "udp2raw-dev-field"));
-        grid.append(fieldBlock("Логирование", connectionLogging));
-        grid.append(fieldBlock("Log level", logLevel));
+        grid.append(fieldBlock("Log", connectionLogging));
+        grid.append(fieldBlock("Log level", logLevel, "udp2raw-log-level-field"));
         grid.append(fieldBlock("Extra args", extra, "udp2raw-field-wide"));
         grid.append($('<div class="udp2raw-actions">').append(del));
 
@@ -300,6 +312,7 @@ $(document).ready(function() {
         $("#udp2raw_instances").append(card);
         refreshCardTitle(card);
         updateDevVisibility(card);
+        updateLogLevelVisibility(card);
     }
 
     function renderConfig(config, runtime, interfaces) {
@@ -413,10 +426,11 @@ $(document).ready(function() {
         $(this).closest(".udp2raw-instance-card").remove();
     });
 
-    $("#udp2raw_instances").on("input change", ".udp2raw-name, .udp2raw-mode", function() {
+    $("#udp2raw_instances").on("input change", ".udp2raw-name, .udp2raw-mode, .udp2raw-connection-logging", function() {
         var card = $(this).closest(".udp2raw-instance-card");
         refreshCardTitle(card);
         updateDevVisibility(card);
+        updateLogLevelVisibility(card);
     });
 
     function saveUdp2rawConfig(message) {
@@ -510,7 +524,7 @@ $(document).ready(function() {
         <div id="udp2raw_instances"></div>
 
         <div class="help-block">
-            Эта кнопка сохраняет настройки всех udp2raw instances: режим, listen, remote, key, raw-mode, dev, логирование, log level и дополнительные параметры.
+            Эта кнопка сохраняет настройки всех udp2raw instances: режим, listen, remote, key, raw-mode, dev, Log, Log level и дополнительные параметры.
         </div>
 
         <button id="btn_udp2raw_save_instances" type="button" class="btn btn-default"><i class="fa fa-save"></i> Сохранить instances</button>
