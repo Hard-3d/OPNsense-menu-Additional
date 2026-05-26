@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Installing OPNsense Additional Menu v0.1.30..."
+echo "Installing OPNsense Additional Menu v0.1.31..."
 
 # ownership
 chown -R root:wheel /usr/local/opnsense/mvc/app/models/OPNsense/Additional 2>/dev/null || true
@@ -35,6 +35,7 @@ chmod 755 /usr/local/opnsense/scripts/additional/check-tailscale-status.php 2>/d
 chmod 755 /usr/local/opnsense/scripts/additional/check-wan-gateway-loss.php 2>/dev/null || true
 chmod 755 /usr/local/opnsense/scripts/additional/additional-updater.php 2>/dev/null || true
 chmod 755 /usr/local/opnsense/scripts/additional/additional-scheduler.php 2>/dev/null || true
+chmod 755 /usr/local/opnsense/scripts/additional/wireguard-peers-manager.php 2>/dev/null || true
 chmod 755 /usr/local/opnsense/scripts/additional/udp2raw-manager.php 2>/dev/null || true
 chmod 755 /usr/local/opnsense/scripts/additional/bin/udp2raw_freebsd 2>/dev/null || true
 chmod 755 /usr/local/etc/rc.syshook.d/start/92-additional-udp2raw 2>/dev/null || true
@@ -57,6 +58,7 @@ php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/EthnameCo
 php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/GeoipController.php
 php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/CheckstatusController.php
 php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/CheckwanController.php
+php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/WireguardpeersController.php
 php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/UpdaterController.php
 php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/SchedulerController.php
 php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/Udp2rawController.php
@@ -68,6 +70,7 @@ php -l /usr/local/opnsense/scripts/additional/check-tailscale-status.php
 php -l /usr/local/opnsense/scripts/additional/check-wan-gateway-loss.php
 php -l /usr/local/opnsense/scripts/additional/additional-updater.php
 php -l /usr/local/opnsense/scripts/additional/additional-scheduler.php
+php -l /usr/local/opnsense/scripts/additional/wireguard-peers-manager.php
 php -l /usr/local/opnsense/scripts/additional/udp2raw-manager.php
 
 php -r 'simplexml_load_file("/usr/local/opnsense/mvc/app/models/OPNsense/Additional/Menu/Menu.xml") === false ? exit(1) : print("Menu.xml OK\n");'

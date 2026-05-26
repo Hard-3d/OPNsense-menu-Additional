@@ -20,6 +20,10 @@ function tasks_definition(): array
             'title' => 'WireGuard check',
             'command' => '/usr/local/opnsense/scripts/additional/check-wg-status.php --silent',
         ],
+        'wireguard_peers_check' => [
+            'title' => 'WireGuard peers check',
+            'command' => '/usr/local/opnsense/scripts/additional/wireguard-peers-manager.php --check --json',
+        ],
         'tailscale_check' => [
             'title' => 'Tailscale check',
             'command' => '/usr/local/opnsense/scripts/additional/check-tailscale-status.php --silent',
@@ -52,6 +56,12 @@ function default_task_config(string $taskId): array
             'enabled' => '0',
             'mode' => 'interval',
             'interval_minutes' => '2',
+            'time' => '00:00',
+        ],
+        'wireguard_peers_check' => [
+            'enabled' => '0',
+            'mode' => 'interval',
+            'interval_minutes' => '1',
             'time' => '00:00',
         ],
         'tailscale_check' => [

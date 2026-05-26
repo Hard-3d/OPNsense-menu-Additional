@@ -3,7 +3,8 @@
         <Ethname order="10" VisibleName="Ethname" url="/ui/additional/index/ethname"/>
         <GeoIPUpdate order="20" VisibleName="GeoIP update" url="/ui/additional/index/geoipupdate"/>
         <CheckStatus order="30" VisibleName="Check VPN status" url="/ui/additional/index/checkstatus"/>
-        <CheckWAN order="40" VisibleName="Check WAN" url="/ui/additional/index/checkwan"/>
+        <WireGuardPeers order="40" VisibleName="WireGuard peers" url="/ui/additional/index/wireguardpeers"/>
+        <CheckWAN order="45" VisibleName="Check WAN" url="/ui/additional/index/checkwan"/>
         <Udp2raw order="50" VisibleName="udp2raw" url="/ui/additional/index/udp2raw"/>
         <Scheduler order="60" VisibleName="Scheduler" url="/ui/additional/index/scheduler"/>
         <Updater order="70" VisibleName="Update" url="/ui/additional/index/updater"/>

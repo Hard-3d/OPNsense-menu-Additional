@@ -28,6 +28,15 @@
                     <pattern>api/additional/scheduler/*</pattern>
         </patterns>
     </page-additional-checkstatus>
+    <page-additional-wireguardpeers>
+        <name>WebCfg - Additional: WireGuard peers</name>
+        <description>Allow access to Additional WireGuard peers</description>
+        <patterns>
+            <pattern>ui/additional/index/wireguardpeers</pattern>
+            <pattern>api/additional/wireguardpeers/*</pattern>
+            <pattern>api/additional/scheduler/*</pattern>
+        </patterns>
+    </page-additional-wireguardpeers>
     <page-additional-checkwan>
         <name>WebCfg - Additional: Check WAN</name>
         <description>Allow access to Additional Check WAN</description>

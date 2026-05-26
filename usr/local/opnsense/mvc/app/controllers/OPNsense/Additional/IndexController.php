@@ -21,6 +21,11 @@ class IndexController extends BaseIndexController
         $this->view->pick('OPNsense/Additional/checkstatus');
     }
 
+    public function wireguardpeersAction()
+    {
+        $this->view->pick('OPNsense/Additional/wireguardpeers');
+    }
+
     public function checkwanAction()
     {
         $this->view->pick('OPNsense/Additional/checkwan');
