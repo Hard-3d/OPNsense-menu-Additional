@@ -341,6 +341,7 @@ $(document).ready(function() {
 
     function renderBinary(binary) {
         binary = binary || {};
+
         if (binary.executable) {
             $("#udp2raw_binary_status").html('<span class="label label-success">OK</span> ' + (binary.path || ""));
         } else if (binary.exists) {
@@ -348,6 +349,30 @@ $(document).ready(function() {
         } else {
             $("#udp2raw_binary_status").html('<span class="label label-danger">Не найден</span> ' + (binary.path || ""));
         }
+
+        var versionHtml = "-";
+        var versionJson = binary.version_json || null;
+
+        if (versionJson && versionJson.version) {
+            var mp = versionJson.mp ? "1" : "0";
+            var linux = versionJson.linux ? "1" : "0";
+            versionHtml =
+                '<span class="label label-info">' + versionJson.version + '</span> ' +
+                '<code>' + (versionJson.name || "udp2raw") + '</code> ' +
+                'git=<code>' + (versionJson.git || "-") + '</code> ' +
+                'build=<code>' + (versionJson.build_date || "-") + ' ' + (versionJson.build_time || "") + '</code> ' +
+                'mp=<code>' + mp + '</code> ' +
+                'linux=<code>' + linux + '</code>';
+        } else if (binary.version_full) {
+            versionHtml = '<code>' + String(binary.version_full).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</code>';
+        } else if (binary.version) {
+            versionHtml = '<span class="label label-info">' + binary.version + '</span>';
+        } else if (binary.version_error) {
+            versionHtml = '<span class="label label-warning">Не удалось получить версию</span> ' +
+                '<code>' + String(binary.version_error).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</code>';
+        }
+
+        $("#udp2raw_binary_version").html(versionHtml);
     }
 
     function collectConfig() {
@@ -405,6 +430,9 @@ $(document).ready(function() {
             if (data.status === "ok") {
                 showMessage("success", data.message || "Команда выполнена");
                 renderConfig(data.config || collectConfig(), data.runtime || {}, data.interfaces || interfaceList);
+                if (data.binary) {
+                    renderBinary(data.binary);
+                }
             } else {
                 showMessage("danger", data.message || "Ошибка udp2raw");
             }
@@ -479,6 +507,10 @@ $(document).ready(function() {
             <tr>
                 <th style="width:260px;">Бинарник</th>
                 <td id="udp2raw_binary_status">-</td>
+            </tr>
+            <tr>
+                <th>Версия бинарника</th>
+                <td id="udp2raw_binary_version">-</td>
             </tr>
             <tr>
                 <th>Autostart при загрузке OPNsense</th>

@@ -230,6 +230,68 @@ class Udp2rawController extends ApiControllerBase
     }
 
 
+
+    private function runBinaryVersionCommand(string $argument): array
+    {
+        if (!is_executable(self::BINARY_FILE)) {
+            return [
+                'exit_code' => 127,
+                'output' => '',
+            ];
+        }
+
+        $output = [];
+        $exitCode = 0;
+        $command = escapeshellarg(self::BINARY_FILE) . ' ' . $argument;
+        exec($command . ' 2>&1', $output, $exitCode);
+
+        return [
+            'exit_code' => $exitCode,
+            'output' => trim(implode("\n", $output)),
+        ];
+    }
+
+    private function getBinaryInfo(): array
+    {
+        $info = [
+            'path' => self::BINARY_FILE,
+            'exists' => file_exists(self::BINARY_FILE),
+            'executable' => is_executable(self::BINARY_FILE),
+            'version' => '',
+            'version_full' => '',
+            'version_json' => null,
+            'version_error' => '',
+        ];
+
+        if (!$info['executable']) {
+            return $info;
+        }
+
+        $version = $this->runBinaryVersionCommand('--version');
+        if ($version['exit_code'] === 0) {
+            $info['version'] = $version['output'];
+        } else {
+            $info['version_error'] = $version['output'];
+        }
+
+        $versionFull = $this->runBinaryVersionCommand('--version-full');
+        if ($versionFull['exit_code'] === 0) {
+            $info['version_full'] = $versionFull['output'];
+        }
+
+        $versionJson = $this->runBinaryVersionCommand('--version-json');
+        if ($versionJson['exit_code'] === 0 && $versionJson['output'] !== '') {
+            $decoded = json_decode($versionJson['output'], true);
+
+            if (is_array($decoded)) {
+                $info['version_json'] = $decoded;
+            }
+        }
+
+        return $info;
+    }
+
+
     private function getInterfaces(): array
     {
         $result = [];
@@ -302,11 +364,7 @@ class Udp2rawController extends ApiControllerBase
             'status' => 'ok',
             'config' => $this->loadConfig(),
             'runtime' => $this->runManager('--status'),
-            'binary' => [
-                'path' => self::BINARY_FILE,
-                'exists' => file_exists(self::BINARY_FILE),
-                'executable' => is_executable(self::BINARY_FILE),
-            ],
+            'binary' => $this->getBinaryInfo(),
             'interfaces' => $this->getInterfaces(),
         ];
     }
@@ -326,6 +384,7 @@ class Udp2rawController extends ApiControllerBase
                 'message' => 'Настройки udp2raw сохранены',
                 'config' => $config,
                 'runtime' => $this->runManager('--status'),
+                'binary' => $this->getBinaryInfo(),
                 'interfaces' => $this->getInterfaces(),
             ];
         } catch (\Throwable $e) {
@@ -381,6 +440,7 @@ class Udp2rawController extends ApiControllerBase
                 'message' => $status === 'ok' ? $okMessage : ($runtime['message'] ?? 'Ошибка udp2raw'),
                 'config' => $this->loadConfig(),
                 'runtime' => $runtime,
+                'binary' => $this->getBinaryInfo(),
                 'interfaces' => $this->getInterfaces(),
             ];
         } catch (\Throwable $e) {
