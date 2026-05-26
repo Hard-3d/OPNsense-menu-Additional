@@ -342,10 +342,18 @@ $(document).ready(function() {
     function renderBinary(binary) {
         binary = binary || {};
 
+        var meta = "";
+        if (binary.size) {
+            meta += " size=" + Math.round(binary.size / 1024) + " KB";
+        }
+        if (binary.sha256) {
+            meta += " sha256=<code>" + String(binary.sha256).substring(0, 12) + "…</code>";
+        }
+
         if (binary.executable) {
-            $("#udp2raw_binary_status").html('<span class="label label-success">OK</span> ' + (binary.path || ""));
+            $("#udp2raw_binary_status").html('<span class="label label-success">OK</span> ' + (binary.path || "") + meta);
         } else if (binary.exists) {
-            $("#udp2raw_binary_status").html('<span class="label label-warning">Есть, но не исполняемый</span> ' + (binary.path || ""));
+            $("#udp2raw_binary_status").html('<span class="label label-warning">Есть, но не исполняемый</span> ' + (binary.path || "") + meta);
         } else {
             $("#udp2raw_binary_status").html('<span class="label label-danger">Не найден</span> ' + (binary.path || ""));
         }
@@ -354,22 +362,21 @@ $(document).ready(function() {
         var versionJson = binary.version_json || null;
 
         if (versionJson && versionJson.version) {
-            var mp = versionJson.mp ? "1" : "0";
-            var linux = versionJson.linux ? "1" : "0";
             versionHtml =
                 '<span class="label label-info">' + versionJson.version + '</span> ' +
                 '<code>' + (versionJson.name || "udp2raw") + '</code> ' +
                 'git=<code>' + (versionJson.git || "-") + '</code> ' +
                 'build=<code>' + (versionJson.build_date || "-") + ' ' + (versionJson.build_time || "") + '</code> ' +
-                'mp=<code>' + mp + '</code> ' +
-                'linux=<code>' + linux + '</code>';
+                'mp=<code>' + (versionJson.mp ? "1" : "0") + '</code> ' +
+                'linux=<code>' + (versionJson.linux ? "1" : "0") + '</code>';
         } else if (binary.version_full) {
             versionHtml = '<code>' + String(binary.version_full).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</code>';
         } else if (binary.version) {
             versionHtml = '<span class="label label-info">' + binary.version + '</span>';
         } else if (binary.version_error) {
-            versionHtml = '<span class="label label-warning">Не удалось получить версию</span> ' +
-                '<code>' + String(binary.version_error).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</code>';
+            versionHtml =
+                '<span class="label label-warning">Не поддерживается</span> ' +
+                String(binary.version_error).replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
         $("#udp2raw_binary_version").html(versionHtml);

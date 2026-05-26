@@ -231,6 +231,13 @@ class Udp2rawController extends ApiControllerBase
 
 
 
+    private function stripAnsi(string $value): string
+    {
+        $value = preg_replace('/\x1b\[[0-9;]*[A-Za-z]/', '', $value);
+        $value = preg_replace('/\x1b\[[0-9;]*m/', '', (string)$value);
+        return trim((string)$value);
+    }
+
     private function runBinaryVersionCommand(string $argument): array
     {
         if (!is_executable(self::BINARY_FILE)) {
@@ -247,7 +254,7 @@ class Udp2rawController extends ApiControllerBase
 
         return [
             'exit_code' => $exitCode,
-            'output' => trim(implode("\n", $output)),
+            'output' => $this->stripAnsi(trim(implode("\n", $output))),
         ];
     }
 
@@ -257,9 +264,13 @@ class Udp2rawController extends ApiControllerBase
             'path' => self::BINARY_FILE,
             'exists' => file_exists(self::BINARY_FILE),
             'executable' => is_executable(self::BINARY_FILE),
+            'size' => is_file(self::BINARY_FILE) ? (filesize(self::BINARY_FILE) ?: 0) : 0,
+            'mtime' => is_file(self::BINARY_FILE) ? date('Y-m-d H:i:s', filemtime(self::BINARY_FILE)) : '',
+            'sha256' => is_file(self::BINARY_FILE) ? hash_file('sha256', self::BINARY_FILE) : '',
             'version' => '',
             'version_full' => '',
             'version_json' => null,
+            'version_supported' => false,
             'version_error' => '',
         ];
 
@@ -267,30 +278,53 @@ class Udp2rawController extends ApiControllerBase
             return $info;
         }
 
-        $version = $this->runBinaryVersionCommand('--version');
-        if ($version['exit_code'] === 0) {
-            $info['version'] = $version['output'];
-        } else {
-            $info['version_error'] = $version['output'];
-        }
-
-        $versionFull = $this->runBinaryVersionCommand('--version-full');
-        if ($versionFull['exit_code'] === 0) {
-            $info['version_full'] = $versionFull['output'];
-        }
-
+        /*
+         * Prefer JSON. New udp2raw builds support --version-json.
+         * Old builds return "invalid option" and may include colored log lines.
+         */
         $versionJson = $this->runBinaryVersionCommand('--version-json');
         if ($versionJson['exit_code'] === 0 && $versionJson['output'] !== '') {
             $decoded = json_decode($versionJson['output'], true);
 
             if (is_array($decoded)) {
                 $info['version_json'] = $decoded;
+                $info['version'] = (string)($decoded['version'] ?? '');
+                $info['version_supported'] = true;
             }
+        }
+
+        if ($info['version_supported']) {
+            $versionFull = $this->runBinaryVersionCommand('--version-full');
+            if ($versionFull['exit_code'] === 0) {
+                $info['version_full'] = $versionFull['output'];
+            }
+
+            return $info;
+        }
+
+        $version = $this->runBinaryVersionCommand('--version');
+        if ($version['exit_code'] === 0 && $version['output'] !== '') {
+            $info['version'] = $version['output'];
+            $info['version_supported'] = true;
+
+            $versionFull = $this->runBinaryVersionCommand('--version-full');
+            if ($versionFull['exit_code'] === 0) {
+                $info['version_full'] = $versionFull['output'];
+            }
+
+            return $info;
+        }
+
+        $errorText = trim(($versionJson['output'] ?? '') . "\n" . ($version['output'] ?? ''));
+
+        if (stripos($errorText, 'invalid option') !== false || stripos($errorText, 'invaild option') !== false) {
+            $info['version_error'] = 'Текущий бинарник не поддерживает ключи --version / --version-json';
+        } else {
+            $info['version_error'] = $errorText !== '' ? $errorText : 'Не удалось получить версию бинарника';
         }
 
         return $info;
     }
-
 
     private function getInterfaces(): array
     {
