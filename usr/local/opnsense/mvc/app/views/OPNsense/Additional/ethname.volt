@@ -1,6 +1,9 @@
 <style>
     .ethname-toolbar { margin-bottom: 15px; }
-    .ethname-table input { font-family: Menlo, Monaco, Consolas, "Courier New", monospace; }
+    .ethname-table input,
+    .ethname-table select { font-family: Menlo, Monaco, Consolas, "Courier New", monospace; }
+    .ethname-mac-duplicate { border-color: #f05050 !important; box-shadow: 0 0 0 1px rgba(240,80,80,0.35); }
+    .ethname-interface-hint { color: #9da7b3; font-size: 12px; margin-top: 4px; }
     .ethname-preview { font-family: Menlo, Monaco, Consolas, "Courier New", monospace; font-size: 13px; min-height: 220px; white-space: pre; }
     .ethname-section { margin-top: 20px; }
 
@@ -79,6 +82,8 @@
 
 <script>
 $(document).ready(function() {
+    var availablePhysicalInterfaces = [];
+
     function showMessage(type, message) {
         var box = $("#ethname_message");
         box.removeClass("alert-success alert-danger alert-warning alert-info");
@@ -233,21 +238,131 @@ $(document).ready(function() {
         return result;
     }
 
+    function normalizeMac(mac) {
+        return String(mac || "").trim().toLowerCase();
+    }
+
+    function normalizePhysicalInterfaces(items) {
+        availablePhysicalInterfaces = [];
+
+        (items || []).forEach(function(item) {
+            if (!item || !item.mac) {
+                return;
+            }
+
+            availablePhysicalInterfaces.push({
+                name: item.name || "",
+                mac: normalizeMac(item.mac),
+                description: item.description || "",
+                label: item.label || ((item.name || "") + " / " + normalizeMac(item.mac))
+            });
+        });
+    }
+
+    function findPhysicalByMac(mac) {
+        mac = normalizeMac(mac);
+
+        for (var i = 0; i < availablePhysicalInterfaces.length; i++) {
+            if (availablePhysicalInterfaces[i].mac === mac) {
+                return availablePhysicalInterfaces[i];
+            }
+        }
+
+        return null;
+    }
+
+    function buildMacSelect(currentMac) {
+        currentMac = normalizeMac(currentMac);
+
+        var select = $("<select>").addClass("form-control ethname-mac");
+        select.append($("<option>").attr("value", "").text("Выберите физический интерфейс / MAC"));
+
+        var found = false;
+        availablePhysicalInterfaces.forEach(function(item) {
+            if (item.mac === currentMac) {
+                found = true;
+            }
+
+            select.append(
+                $("<option>")
+                    .attr("value", item.mac)
+                    .attr("data-ifname", item.name)
+                    .text(item.label)
+            );
+        });
+
+        if (currentMac !== "" && !found) {
+            select.append(
+                $("<option>")
+                    .attr("value", currentMac)
+                    .attr("data-ifname", "")
+                    .text(currentMac + " (из текущего ethname)")
+            );
+        }
+
+        select.val(currentMac);
+        return select;
+    }
+
+    function selectedMacCounts() {
+        var counts = {};
+
+        $(".ethname-mac").each(function() {
+            var mac = normalizeMac($(this).val());
+            if (mac === "") {
+                return;
+            }
+
+            counts[mac] = (counts[mac] || 0) + 1;
+        });
+
+        return counts;
+    }
+
+    function updateMacOptions() {
+        var counts = selectedMacCounts();
+
+        $(".ethname-mac").each(function() {
+            var select = $(this);
+            var current = normalizeMac(select.val());
+
+            select.find("option").each(function() {
+                var option = $(this);
+                var mac = normalizeMac(option.attr("value"));
+
+                if (mac === "") {
+                    option.prop("disabled", false);
+                    return;
+                }
+
+                option.prop("disabled", mac !== current && (counts[mac] || 0) > 0);
+            });
+
+            if (current !== "" && (counts[current] || 0) > 1) {
+                select.addClass("ethname-mac-duplicate");
+            } else {
+                select.removeClass("ethname-mac-duplicate");
+            }
+        });
+    }
+
     function renderRows(interfaces) {
         $("#ethname_interfaces tbody").empty();
         interfaces.forEach(function(item) { addInterfaceRow(item.name, item.mac); });
-        if (interfaces.length === 0) { addInterfaceRow("vmx1", ""); }
+        if (interfaces.length === 0) { addInterfaceRow(getNextInterfaceName(), ""); }
+        updateMacOptions();
     }
 
     function addInterfaceRow(name, mac) {
         var row = $("<tr>");
         var nameInput = $("<input>").attr("type", "text").addClass("form-control ethname-ifname").attr("placeholder", "vmx1").val(name || "");
-        var macInput = $("<input>").attr("type", "text").addClass("form-control ethname-mac").attr("placeholder", "00:50:56:aa:bb:cc").val(mac || "");
+        var macSelect = buildMacSelect(mac || "");
         var removeBtn = $("<button>").attr("type", "button").addClass("btn btn-xs btn-danger ethname-remove-row").html('<i class="fa fa-trash"></i> Удалить');
         row.append($("<td>").append(nameInput));
-        row.append($("<td>").append(macInput));
+        row.append($("<td>").append(macSelect).append($("<div>").addClass("ethname-interface-hint").text("MAC выбирается из физических интерфейсов OPNsense")));
         row.append($("<td>").css("width", "110px").append(removeBtn));
         $("#ethname_interfaces tbody").append(row);
+        updateMacOptions();
         updatePreview();
     }
 
@@ -281,6 +396,7 @@ $(document).ready(function() {
     function validateForm() {
         var errors = [];
         var names = {};
+        var macs = {};
         var macRegex = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
         var timeout = $("#ethname_timeout").val().trim();
         if (!/^\d+$/.test(timeout)) { errors.push("Timeout должен быть числом."); }
@@ -290,11 +406,15 @@ $(document).ready(function() {
             if (!/^[A-Za-z0-9_.:-]+$/.test(item.name)) { errors.push("Некорректное имя интерфейса: " + item.name); }
             if (names[item.name]) { errors.push("Дублируется интерфейс: " + item.name); }
             names[item.name] = true;
+            var normalizedMac = normalizeMac(item.mac);
             if (item.mac === "") {
                 errors.push("У интерфейса " + item.name + " не указан MAC.");
             } else if (!macRegex.test(item.mac)) {
                 errors.push("Некорректный MAC у " + item.name + ": " + item.mac);
+            } else if (macs[normalizedMac]) {
+                errors.push("MAC уже выбран в другой строке: " + normalizedMac);
             }
+            macs[normalizedMac] = true;
         });
 
         return errors;
@@ -326,6 +446,7 @@ $(document).ready(function() {
         hideMessage();
         ajaxCall("/api/additional/ethname/get", {}, function(data, status) {
             if (data.status === "ok") {
+                normalizePhysicalInterfaces(data.physical_interfaces || []);
                 var parsed = parseEthname(data.content);
                 $("#ethname_enable").prop("checked", parsed.enable === "YES");
                 $("#ethname_timeout").val(parsed.timeout);
@@ -345,9 +466,9 @@ $(document).ready(function() {
     $("#btn_ethname_reload").click(function() { loadEthname(); });
     $("#btn_ethname_add").click(function() { addInterfaceRow(getNextInterfaceName(), ""); });
     $("#btn_ethname_sort").click(function() { renderRows(collectInterfaces()); });
-    $("#ethname_interfaces").on("click", ".ethname-remove-row", function() { $(this).closest("tr").remove(); updatePreview(); });
+    $("#ethname_interfaces").on("click", ".ethname-remove-row", function() { $(this).closest("tr").remove(); updateMacOptions(); updatePreview(); });
     $("#ethname_enable, #ethname_timeout").on("change keyup", function() { updatePreview(); });
-    $("#ethname_interfaces").on("change keyup", "input", function() { updatePreview(); });
+    $("#ethname_interfaces").on("change keyup", "input, select", function() { updateMacOptions(); updatePreview(); });
 
     $("#btn_ethname_save").click(function() {
         var errors = validateForm();
@@ -416,7 +537,7 @@ $(document).ready(function() {
                 <thead>
                     <tr>
                         <th style="width: 220px;">Имя интерфейса</th>
-                        <th>MAC-адрес</th>
+                        <th>Физический интерфейс / MAC-адрес</th>
                         <th style="width: 110px;"></th>
                     </tr>
                 </thead>

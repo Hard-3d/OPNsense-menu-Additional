@@ -10,6 +10,7 @@ class EthnameController extends ApiControllerBase
     private const ETHNAME_FILE = '/etc/rc.conf.d/ethname';
     private const SYSHOOK_DIR = '/usr/local/etc/rc.syshook.d/early';
     private const SYSHOOK_FILE = '/usr/local/etc/rc.syshook.d/early/02-ethname';
+    private const CONFIG_XML = '/conf/config.xml';
     private const MAX_FILE_SIZE = 262144;
 
     private function runCommand(string $command, int &$exitCode = null): string
@@ -18,6 +19,130 @@ class EthnameController extends ApiControllerBase
         $exitCode = 0;
         exec($command . ' 2>&1', $output, $exitCode);
         return trim(implode("\n", $output));
+    }
+
+    private function getInterfaceDescriptions(): array
+    {
+        $result = [];
+
+        if (!is_readable(self::CONFIG_XML)) {
+            return $result;
+        }
+
+        libxml_use_internal_errors(true);
+        $xml = simplexml_load_file(self::CONFIG_XML);
+
+        if ($xml !== false && isset($xml->interfaces)) {
+            foreach ($xml->interfaces->children() as $name => $interface) {
+                $if = trim((string)($interface->if ?? ''));
+
+                if ($if === '') {
+                    continue;
+                }
+
+                $descr = trim((string)($interface->descr ?? ''));
+
+                if ($descr !== '') {
+                    $result[$if] = $descr;
+                }
+            }
+        }
+
+        libxml_clear_errors();
+
+        return $result;
+    }
+
+    private function isPhysicalInterfaceName(string $name): bool
+    {
+        $name = strtolower(trim($name));
+
+        if ($name === '') {
+            return false;
+        }
+
+        $excludePrefixes = [
+            'lo', 'pflog', 'pfsync', 'enc', 'tun', 'tap',
+            'wg', 'wireguard', 'ovpn', 'tailscale',
+            'gif', 'gre', 'stf', 'vxlan', 'bridge', 'lagg',
+            'vlan', 'ppp', 'pppoe', 'ipsec'
+        ];
+
+        foreach ($excludePrefixes as $prefix) {
+            if (strpos($name, $prefix) === 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function getPhysicalInterfaces(): array
+    {
+        $exitCode = 0;
+        $output = $this->runCommand('/sbin/ifconfig -l', $exitCode);
+        $descriptions = $this->getInterfaceDescriptions();
+        $interfaces = [];
+        $seenMac = [];
+
+        if ($exitCode !== 0 || trim($output) === '') {
+            return $interfaces;
+        }
+
+        $names = preg_split('/\s+/', trim($output));
+
+        if (!is_array($names)) {
+            return $interfaces;
+        }
+
+        foreach ($names as $name) {
+            $name = trim((string)$name);
+
+            if (!$this->isPhysicalInterfaceName($name)) {
+                continue;
+            }
+
+            $ifconfig = $this->runCommand('/sbin/ifconfig ' . escapeshellarg($name), $exitCode);
+
+            if ($exitCode !== 0) {
+                continue;
+            }
+
+            if (!preg_match('/\bether\s+([0-9a-f]{2}(?::[0-9a-f]{2}){5})\b/i', $ifconfig, $match)) {
+                continue;
+            }
+
+            $mac = strtolower($match[1]);
+
+            if (isset($seenMac[$mac])) {
+                continue;
+            }
+
+            $descr = $descriptions[$name] ?? '';
+            $labelParts = [];
+
+            if ($descr !== '') {
+                $labelParts[] = $descr;
+            }
+
+            $labelParts[] = $name;
+            $labelParts[] = $mac;
+
+            $interfaces[] = [
+                'name' => $name,
+                'mac' => $mac,
+                'description' => $descr,
+                'label' => implode(' / ', $labelParts),
+            ];
+
+            $seenMac[$mac] = true;
+        }
+
+        usort($interfaces, function ($a, $b) {
+            return strnatcasecmp((string)$a['label'], (string)$b['label']);
+        });
+
+        return $interfaces;
     }
 
     private function isEthnameInstalled(): bool
@@ -115,6 +240,7 @@ class EthnameController extends ApiControllerBase
 
     public function getAction()
     {
+        $physicalInterfaces = $this->getPhysicalInterfaces();
         $installResult = $this->installEthnameIfNeeded();
 
         if (!$installResult['ok']) {
@@ -125,7 +251,8 @@ class EthnameController extends ApiControllerBase
                 'content' => '',
                 'path' => self::ETHNAME_FILE,
                 'writable' => false,
-                'installed_now' => $installResult['installed_now']
+                'installed_now' => $installResult['installed_now'],
+                'physical_interfaces' => $physicalInterfaces
             ];
         }
 
@@ -138,7 +265,8 @@ class EthnameController extends ApiControllerBase
                 'content' => '',
                 'path' => $path,
                 'writable' => false,
-                'installed_now' => $installResult['installed_now']
+                'installed_now' => $installResult['installed_now'],
+                'physical_interfaces' => $physicalInterfaces
             ];
         }
 
@@ -149,7 +277,8 @@ class EthnameController extends ApiControllerBase
                 'content' => '',
                 'path' => $path,
                 'writable' => is_writable($path),
-                'installed_now' => $installResult['installed_now']
+                'installed_now' => $installResult['installed_now'],
+                'physical_interfaces' => $physicalInterfaces
             ];
         }
 
@@ -162,7 +291,8 @@ class EthnameController extends ApiControllerBase
                 'content' => '',
                 'path' => $path,
                 'writable' => is_writable($path),
-                'installed_now' => $installResult['installed_now']
+                'installed_now' => $installResult['installed_now'],
+                'physical_interfaces' => $physicalInterfaces
             ];
         }
 
@@ -174,7 +304,8 @@ class EthnameController extends ApiControllerBase
             'writable' => is_writable($path),
             'size' => strlen($content),
             'mtime' => filemtime($path),
-            'installed_now' => $installResult['installed_now']
+            'installed_now' => $installResult['installed_now'],
+            'physical_interfaces' => $physicalInterfaces
         ];
     }
 
