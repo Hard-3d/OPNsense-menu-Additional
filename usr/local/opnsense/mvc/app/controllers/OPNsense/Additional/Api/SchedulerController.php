@@ -18,6 +18,7 @@ class SchedulerController extends ApiControllerBase
         return [
             'geoip_update' => ['title' => 'GeoIP update'],
             'wireguard_check' => ['title' => 'WireGuard check'],
+            'wireguard_peers_check' => ['title' => 'WireGuard peers check'],
             'tailscale_check' => ['title' => 'Tailscale check'],
             'check_wan' => ['title' => 'Check WAN'],
             'udp2raw_watchdog' => ['title' => 'udp2raw watchdog'],
@@ -30,6 +31,7 @@ class SchedulerController extends ApiControllerBase
         $defaults = [
             'geoip_update' => ['enabled' => '0', 'mode' => 'daily', 'interval_minutes' => '1440', 'time' => '05:00'],
             'wireguard_check' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '2', 'time' => '00:00'],
+            'wireguard_peers_check' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '1', 'time' => '00:00'],
             'tailscale_check' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '2', 'time' => '00:00'],
             'check_wan' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '2', 'time' => '00:00'],
             'udp2raw_watchdog' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '1', 'time' => '00:00'],

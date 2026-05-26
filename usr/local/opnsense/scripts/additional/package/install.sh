@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Installing OPNsense Additional Menu v0.1.31..."
+echo "Installing OPNsense Additional Menu v0.1.32..."
 
 # ownership
 chown -R root:wheel /usr/local/opnsense/mvc/app/models/OPNsense/Additional 2>/dev/null || true
@@ -72,6 +72,9 @@ php -l /usr/local/opnsense/scripts/additional/additional-updater.php
 php -l /usr/local/opnsense/scripts/additional/additional-scheduler.php
 php -l /usr/local/opnsense/scripts/additional/wireguard-peers-manager.php
 php -l /usr/local/opnsense/scripts/additional/udp2raw-manager.php
+
+# ensure scheduler config contains all current tasks
+/usr/local/opnsense/scripts/additional/additional-scheduler.php --status --json >/dev/null 2>&1 || true
 
 php -r 'simplexml_load_file("/usr/local/opnsense/mvc/app/models/OPNsense/Additional/Menu/Menu.xml") === false ? exit(1) : print("Menu.xml OK\n");'
 php -r 'simplexml_load_file("/usr/local/opnsense/mvc/app/models/OPNsense/Additional/ACL/ACL.xml") === false ? exit(1) : print("ACL.xml OK\n");'

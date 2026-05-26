@@ -45,7 +45,7 @@
 
 <script>
 $(document).ready(function() {
-    var taskOrder = ["geoip_update", "wireguard_check", "tailscale_check", "check_wan", "udp2raw_watchdog", "update_check"];
+    var taskOrder = ["geoip_update", "wireguard_check", "wireguard_peers_check", "tailscale_check", "check_wan", "udp2raw_watchdog", "update_check"];
 
     function showMessage(type, message) {
         var box = $("#scheduler_message");
