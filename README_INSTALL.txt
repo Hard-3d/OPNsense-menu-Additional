@@ -1,8 +1,8 @@
-OPNsense Additional Menu v0.1.33
+OPNsense Additional Menu v0.1.34
 
 Установка:
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.33-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.34-root.zip
 chmod 755 /install.sh
 /install.sh
 
@@ -22,7 +22,7 @@ Logout -> Login
 Для GitHub:
 - распакуйте архив в локальную папку репозитория;
 - сделайте git add/commit/push;
-- создайте Release v0.1.33;
+- создайте Release v0.1.34;
 - загрузите этот же root ZIP как release asset.
 
 

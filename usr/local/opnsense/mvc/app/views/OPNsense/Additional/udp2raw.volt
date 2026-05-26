@@ -486,7 +486,14 @@ $(document).ready(function() {
             </tr>
             <tr>
                 <th>Watchdog через Scheduler</th>
-                <td><label><input type="checkbox" id="udp2raw_watchdog"> Перезапускать включённые instance, если процесс не найден</label></td>
+                <td>
+                    <label><input type="checkbox" id="udp2raw_watchdog"> Перезапускать включённые instance через Scheduler</label>
+                    <div class="help-block">
+                        Для client mode watchdog также отслеживает в логе <code>pcap_breakloop</code> и
+                        <code>server--&gt;client direction timeout</code>. При обнаружении зависания instance
+                        будет остановлен и запущен заново.
+                    </div>
+                </td>
             </tr>
             <tr>
                 <th>Ротация логов</th>

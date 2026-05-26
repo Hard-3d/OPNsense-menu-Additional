@@ -6,6 +6,7 @@ declare(strict_types=1);
 const SCRIPT_NAME = 'additional-udp2raw';
 const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/udp2raw.json';
 const STATUS_FILE = '/var/run/additional_udp2raw_status.json';
+const WATCHDOG_STATE_FILE = '/var/run/additional_udp2raw_watchdog_state.json';
 const BINARY_FILE = '/usr/local/opnsense/scripts/additional/bin/udp2raw_freebsd';
 const LOG_DIR = '/var/log';
 const PID_DIR = '/var/run';
@@ -1079,6 +1080,285 @@ function find_instance(array $config, string $id): ?array
     return null;
 }
 
+
+function watchdog_patterns(): array
+{
+    return [
+        'pcap_breakloop',
+        'server-->client direction timeout',
+    ];
+}
+
+function load_watchdog_state(): array
+{
+    if (!is_readable(WATCHDOG_STATE_FILE)) {
+        return [
+            'version' => 1,
+            'instances' => [],
+        ];
+    }
+
+    $raw = file_get_contents(WATCHDOG_STATE_FILE);
+    $data = json_decode((string)$raw, true);
+
+    if (!is_array($data)) {
+        return [
+            'version' => 1,
+            'instances' => [],
+        ];
+    }
+
+    if (!isset($data['instances']) || !is_array($data['instances'])) {
+        $data['instances'] = [];
+    }
+
+    return $data;
+}
+
+function save_watchdog_state(array $state): void
+{
+    $state['updated_at'] = date('Y-m-d H:i:s');
+    $json = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+    if ($json !== false) {
+        @file_put_contents(WATCHDOG_STATE_FILE, $json . "\n", LOCK_EX);
+        @chmod(WATCHDOG_STATE_FILE, 0644);
+    }
+}
+
+function read_file_from_offset(string $file, int $offset, int $maxBytes = 262144): string
+{
+    if (!is_readable($file)) {
+        return '';
+    }
+
+    $size = filesize($file);
+
+    if ($size === false || $size <= 0) {
+        return '';
+    }
+
+    if ($offset < 0 || $offset > $size) {
+        $offset = 0;
+    }
+
+    if ($size - $offset > $maxBytes) {
+        $offset = max(0, $size - $maxBytes);
+    }
+
+    $fh = fopen($file, 'rb');
+
+    if ($fh === false) {
+        return '';
+    }
+
+    if ($offset > 0) {
+        fseek($fh, $offset);
+    }
+
+    $data = stream_get_contents($fh);
+    fclose($fh);
+
+    return strip_ansi((string)$data);
+}
+
+function update_watchdog_instance_state(array &$state, array $instance, int $pid, int $size): void
+{
+    $id = safe_id((string)$instance['id']);
+
+    if (!isset($state['instances']) || !is_array($state['instances'])) {
+        $state['instances'] = [];
+    }
+
+    $state['instances'][$id] = [
+        'pid' => $pid,
+        'size' => $size,
+        'updated_at' => date('Y-m-d H:i:s'),
+    ];
+}
+
+function watchdog_log_check(array $instance, int $pid, array &$state): array
+{
+    $id = safe_id((string)$instance['id']);
+    $file = log_file($instance);
+
+    if (!is_readable($file)) {
+        return [
+            'triggered' => false,
+            'reason' => 'log_not_readable',
+            'file' => $file,
+        ];
+    }
+
+    $size = filesize($file);
+    if ($size === false) {
+        $size = 0;
+    }
+
+    $previous = is_array($state['instances'][$id] ?? null) ? $state['instances'][$id] : [];
+    $previousPid = (int)($previous['pid'] ?? 0);
+    $previousSize = (int)($previous['size'] ?? 0);
+
+    /*
+     * First watchdog pass for this process only registers the current log offset.
+     * This prevents restarting because of old pcap_breakloop / timeout lines
+     * left in a persistent log.
+     */
+    if ($previousPid !== $pid || empty($previous)) {
+        update_watchdog_instance_state($state, $instance, $pid, (int)$size);
+
+        return [
+            'triggered' => false,
+            'reason' => 'state_initialized',
+            'file' => $file,
+            'pid' => $pid,
+            'size' => (int)$size,
+        ];
+    }
+
+    $offset = $size < $previousSize ? 0 : $previousSize;
+    $chunk = read_file_from_offset($file, $offset);
+
+    update_watchdog_instance_state($state, $instance, $pid, (int)$size);
+
+    if ($chunk === '') {
+        return [
+            'triggered' => false,
+            'reason' => 'no_new_log',
+            'file' => $file,
+            'pid' => $pid,
+            'offset' => $offset,
+            'size' => (int)$size,
+        ];
+    }
+
+    $lines = preg_split('/\R/', $chunk);
+    $patterns = watchdog_patterns();
+
+    foreach ($lines as $line) {
+        $line = trim((string)$line);
+
+        if ($line === '') {
+            continue;
+        }
+
+        foreach ($patterns as $pattern) {
+            if (stripos($line, $pattern) !== false) {
+                return [
+                    'triggered' => true,
+                    'reason' => 'pattern_detected',
+                    'pattern' => $pattern,
+                    'line' => $line,
+                    'file' => $file,
+                    'pid' => $pid,
+                    'offset' => $offset,
+                    'size' => (int)$size,
+                ];
+            }
+        }
+    }
+
+    return [
+        'triggered' => false,
+        'reason' => 'patterns_not_found',
+        'file' => $file,
+        'pid' => $pid,
+        'offset' => $offset,
+        'size' => (int)$size,
+    ];
+}
+
+function watchdog_instance(array $instance, array $config, array &$watchdogState): array
+{
+    if ($instance['enabled'] !== '1') {
+        return [
+            'id' => $instance['id'],
+            'name' => $instance['name'],
+            'status' => 'skipped',
+            'message' => 'Instance disabled',
+        ];
+    }
+
+    $status = instance_status($instance, $config);
+
+    if (!$status['running']) {
+        $start = start_instance($instance, $config);
+        $start['watchdog_reason'] = 'process_not_running';
+        return $start;
+    }
+
+    /*
+     * The pcap_breakloop / server-->client timeout problem is client-side.
+     * Server instances keep the previous watchdog behavior: only process existence.
+     */
+    if ($instance['mode'] !== 'client') {
+        return [
+            'id' => $instance['id'],
+            'name' => $instance['name'],
+            'status' => 'already_running',
+            'message' => 'Already running',
+            'pid' => $status['pid'],
+            'watchdog_reason' => 'server_mode_process_running',
+        ];
+    }
+
+    $logCheck = watchdog_log_check($instance, (int)$status['pid'], $watchdogState);
+
+    if (empty($logCheck['triggered'])) {
+        return [
+            'id' => $instance['id'],
+            'name' => $instance['name'],
+            'status' => 'already_running',
+            'message' => 'Already running',
+            'pid' => $status['pid'],
+            'watchdog_reason' => $logCheck['reason'] ?? 'ok',
+            'log_check' => $logCheck,
+        ];
+    }
+
+    $stop = stop_instance($instance);
+    sleep(2);
+    $start = start_instance($instance, $config);
+
+    /*
+     * After restart register the new process/log offset so the same old line
+     * cannot immediately trigger another restart.
+     */
+    $newStatus = instance_status($instance, $config);
+    $logFile = log_file($instance);
+    $logSize = is_file($logFile) ? (filesize($logFile) ?: 0) : 0;
+
+    if (!empty($newStatus['pid'])) {
+        update_watchdog_instance_state($watchdogState, $instance, (int)$newStatus['pid'], (int)$logSize);
+    }
+
+    return [
+        'id' => $instance['id'],
+        'name' => $instance['name'],
+        'status' => 'restarted',
+        'message' => 'Restarted by watchdog: ' . ($logCheck['pattern'] ?? 'log pattern'),
+        'pid' => $newStatus['pid'] ?? ($start['pid'] ?? 0),
+        'watchdog_reason' => 'log_pattern_detected',
+        'log_check' => $logCheck,
+        'stop' => $stop,
+        'start' => $start,
+    ];
+}
+
+function watchdog_all(array $config): array
+{
+    $watchdogState = load_watchdog_state();
+    $results = [];
+
+    foreach ($config['instances'] as $instance) {
+        $results[] = watchdog_instance($instance, $config, $watchdogState);
+    }
+
+    save_watchdog_state($watchdogState);
+
+    return $results;
+}
+
 function all_status(array $config): array
 {
     rotate_all_logs_if_needed($config);
@@ -1178,10 +1458,12 @@ try {
         exit(0);
     }
 
-    if (in_array($args['action'], ['start_all', 'autostart', 'watchdog'], true)) {
+    if (in_array($args['action'], ['start_all', 'autostart'], true)) {
         foreach ($config['instances'] as $instance) {
             $result['results'][] = start_instance($instance, $config);
         }
+    } elseif ($args['action'] === 'watchdog') {
+        $result['results'] = watchdog_all($config);
     } elseif ($args['action'] === 'stop_all') {
         foreach ($config['instances'] as $instance) {
             $result['results'][] = stop_instance($instance);
