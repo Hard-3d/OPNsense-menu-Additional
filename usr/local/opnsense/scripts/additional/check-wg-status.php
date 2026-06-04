@@ -263,6 +263,321 @@ function run_command(string $command): array
     ];
 }
 
+function load_config_dom(): DOMDocument
+{
+    if (!is_readable(OPN_CONFIG_FILE)) {
+        throw new RuntimeException('Не удалось прочитать ' . OPN_CONFIG_FILE);
+    }
+
+    $dom = new DOMDocument('1.0', 'UTF-8');
+    $dom->preserveWhiteSpace = true;
+    $dom->formatOutput = false;
+
+    libxml_use_internal_errors(true);
+    $loaded = $dom->load(OPN_CONFIG_FILE);
+
+    if (!$loaded) {
+        $errors = [];
+
+        foreach (libxml_get_errors() as $error) {
+            $errors[] = trim($error->message);
+        }
+
+        libxml_clear_errors();
+
+        throw new RuntimeException('Ошибка чтения config.xml: ' . implode('; ', $errors));
+    }
+
+    libxml_clear_errors();
+
+    return $dom;
+}
+
+function dom_direct_child(DOMElement $node, array $names): ?DOMElement
+{
+    $lookup = [];
+
+    foreach ($names as $name) {
+        $lookup[strtolower($name)] = true;
+    }
+
+    foreach ($node->childNodes as $child) {
+        if ($child instanceof DOMElement && isset($lookup[strtolower($child->nodeName)])) {
+            return $child;
+        }
+    }
+
+    return null;
+}
+
+function dom_direct_child_text(DOMElement $node, array $names, string $default = ''): string
+{
+    $child = dom_direct_child($node, $names);
+
+    if ($child === null) {
+        return $default;
+    }
+
+    return trim((string)$child->textContent);
+}
+
+function dom_set_direct_child_text(DOMElement $node, string $name, string $value): void
+{
+    $child = dom_direct_child($node, [$name]);
+
+    if ($child === null) {
+        $child = $node->ownerDocument->createElement($name);
+        $node->appendChild($child);
+    }
+
+    while ($child->firstChild !== null) {
+        $child->removeChild($child->firstChild);
+    }
+
+    $child->appendChild($node->ownerDocument->createTextNode($value));
+}
+
+function dom_node_enabled(DOMElement $node): bool
+{
+    $enabled = dom_direct_child_text($node, ['enabled'], '');
+
+    if ($enabled === '') {
+        return true;
+    }
+
+    $value = strtolower(trim($enabled));
+
+    return in_array($value, ['1', 'true', 'yes', 'on'], true);
+}
+
+function dom_node_path(DOMElement $node): string
+{
+    $parts = [];
+    $current = $node;
+
+    while ($current instanceof DOMElement) {
+        $index = 1;
+        $sibling = $current->previousSibling;
+
+        while ($sibling !== null) {
+            if ($sibling instanceof DOMElement && $sibling->nodeName === $current->nodeName) {
+                $index++;
+            }
+
+            $sibling = $sibling->previousSibling;
+        }
+
+        array_unshift($parts, $current->nodeName . '[' . $index . ']');
+        $current = $current->parentNode instanceof DOMElement ? $current->parentNode : null;
+    }
+
+    return '/' . implode('/', $parts);
+}
+
+function collect_wireguard_clients_dom_recursive(DOMElement $node, array &$clients): void
+{
+    if (dom_direct_child($node, ['tunneladdress']) !== null) {
+        $clients[] = [
+            'node' => $node,
+            'path' => dom_node_path($node),
+            'enabled' => dom_node_enabled($node),
+            'name' => dom_direct_child_text($node, ['name', 'description', 'descr'], ''),
+            'tunneladdress' => dom_direct_child_text($node, ['tunneladdress'], ''),
+        ];
+    }
+
+    foreach ($node->childNodes as $child) {
+        if ($child instanceof DOMElement) {
+            collect_wireguard_clients_dom_recursive($child, $clients);
+        }
+    }
+}
+
+function load_wireguard_clients_dom(DOMDocument $dom): array
+{
+    $clients = [];
+    $wireguardNodes = $dom->getElementsByTagName('wireguard');
+
+    if ($wireguardNodes->length > 0) {
+        foreach ($wireguardNodes as $wireguard) {
+            if ($wireguard instanceof DOMElement) {
+                collect_wireguard_clients_dom_recursive($wireguard, $clients);
+            }
+        }
+    } elseif ($dom->documentElement instanceof DOMElement) {
+        collect_wireguard_clients_dom_recursive($dom->documentElement, $clients);
+    }
+
+    return $clients;
+}
+
+function tunneladdress_items(string $tunneladdress): array
+{
+    $items = [];
+
+    foreach (explode(',', $tunneladdress) as $addr) {
+        $addr = trim($addr);
+
+        if ($addr === '' || $addr === '0.0.0.0/0' || $addr === '::/0') {
+            continue;
+        }
+
+        if (preg_match('~/32$~', $addr)) {
+            $items[] = ['type' => 'host', 'value' => substr($addr, 0, -3), 'raw' => $addr];
+        } elseif (preg_match('~/128$~', $addr)) {
+            $items[] = ['type' => 'host', 'value' => substr($addr, 0, -4), 'raw' => $addr];
+        } else {
+            $items[] = ['type' => 'network', 'value' => $addr, 'raw' => $addr];
+        }
+    }
+
+    return $items;
+}
+
+function client_matches_degradation(array $client, array $missingNetworks, array $unreachableHosts): bool
+{
+    foreach (tunneladdress_items((string)$client['tunneladdress']) as $item) {
+        if ($item['type'] === 'network' && in_array($item['value'], $missingNetworks, true)) {
+            return true;
+        }
+
+        if ($item['type'] === 'host' && in_array($item['value'], $unreachableHosts, true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function backup_opn_config(string $suffix): string
+{
+    $backup = OPN_CONFIG_FILE . '.additional-check-wg-status.' . $suffix . '.' . date('YmdHis') . '.bak';
+
+    if (!@copy(OPN_CONFIG_FILE, $backup)) {
+        throw new RuntimeException('Не удалось создать backup config.xml: ' . $backup);
+    }
+
+    @chmod($backup, 0600);
+
+    return $backup;
+}
+
+function save_config_dom(DOMDocument $dom): void
+{
+    if ($dom->save(OPN_CONFIG_FILE) === false) {
+        throw new RuntimeException('Не удалось записать ' . OPN_CONFIG_FILE);
+    }
+
+    @chmod(OPN_CONFIG_FILE, 0600);
+}
+
+function apply_wireguard_config(string $phase): array
+{
+    $commands = [
+        '/usr/local/sbin/configctl wireguard reconfigure',
+        '/usr/local/sbin/configctl wireguard restart',
+        '/usr/local/etc/rc.d/wireguard restart',
+        '/usr/sbin/service wireguard restart',
+    ];
+
+    $attempts = [];
+
+    foreach ($commands as $command) {
+        $binary = preg_split('/\s+/', $command)[0] ?? '';
+
+        if ($binary === '' || !is_executable($binary)) {
+            $attempts[] = ['phase' => $phase, 'command' => $command, 'exit_code' => 127, 'output' => 'binary not executable'];
+            continue;
+        }
+
+        $result = run_command($command);
+        $result['phase'] = $phase;
+        $result['command'] = $command;
+        $attempts[] = $result;
+
+        if ((int)$result['exit_code'] === 0) {
+            return ['ok' => true, 'phase' => $phase, 'command' => $command, 'attempts' => $attempts];
+        }
+    }
+
+    return ['ok' => false, 'phase' => $phase, 'command' => '', 'attempts' => $attempts];
+}
+
+function reset_wireguard_peers_by_toggle(array $missingNetworks, array $unreachableHosts): array
+{
+    $dom = load_config_dom();
+    $clients = load_wireguard_clients_dom($dom);
+    $affected = [];
+
+    foreach ($clients as $client) {
+        if (empty($client['enabled'])) {
+            continue;
+        }
+
+        if (client_matches_degradation($client, $missingNetworks, $unreachableHosts)) {
+            $affected[] = $client;
+        }
+    }
+
+    if (empty($affected) && !empty($unreachableHosts)) {
+        foreach ($clients as $client) {
+            if (!empty($client['enabled'])) {
+                $affected[] = $client;
+            }
+        }
+    }
+
+    if (empty($affected)) {
+        return [
+            'ok' => false,
+            'reason' => 'no_affected_peers',
+            'message' => 'Не удалось определить peer для toggle-reset',
+            'affected' => [],
+        ];
+    }
+
+    $backup = backup_opn_config('before-toggle');
+    $affectedInfo = [];
+
+    foreach ($affected as $client) {
+        /** @var DOMElement $node */
+        $node = $client['node'];
+        dom_set_direct_child_text($node, 'enabled', '0');
+
+        $affectedInfo[] = [
+            'name' => $client['name'] !== '' ? $client['name'] : $client['path'],
+            'path' => $client['path'],
+            'tunneladdress' => $client['tunneladdress'],
+        ];
+    }
+
+    save_config_dom($dom);
+    $disableApply = apply_wireguard_config('disable');
+    sleep(2);
+
+    foreach ($affected as $client) {
+        /** @var DOMElement $node */
+        $node = $client['node'];
+        dom_set_direct_child_text($node, 'enabled', '1');
+    }
+
+    save_config_dom($dom);
+    $enableApply = apply_wireguard_config('enable');
+    sleep(2);
+
+    return [
+        'ok' => !empty($enableApply['ok']),
+        'reason' => !empty($enableApply['ok']) ? 'toggle_reset_done' : 'enable_apply_failed',
+        'message' => !empty($enableApply['ok'])
+            ? 'Peer toggle-reset выполнен'
+            : 'Peer toggle-reset выполнен, но apply после включения завершился ошибкой',
+        'backup' => $backup,
+        'affected' => $affectedInfo,
+        'disable_apply' => $disableApply,
+        'enable_apply' => $enableApply,
+    ];
+}
+
 function restart_wireguard(): array
 {
     /*
@@ -415,16 +730,28 @@ try {
             out_msg('Хосты не пингуются: ' . implode(', ', $unreachableHosts), $silent);
         }
 
-        $restart = restart_wireguard();
+        $peerReset = reset_wireguard_peers_by_toggle($missingNetworks, $unreachableHosts);
+        $restart = null;
 
-        if ($restart['ok']) {
-            out_msg('WireGuard перезапущен: ' . $restart['command'], $silent);
-            $message = 'WireGuard деградация, выполнен перезапуск';
-            $state = 'degraded_restarted';
+        if (!empty($peerReset['ok'])) {
+            out_msg('WireGuard peer toggle-reset выполнен', $silent);
+            $message = 'WireGuard деградация, выполнен toggle-reset peer';
+            $state = 'degraded_peer_toggle_reset';
         } else {
-            out_msg('Не удалось перезапустить WireGuard', $silent);
-            $message = 'WireGuard деградация, перезапуск не выполнен';
-            $state = 'degraded_restart_failed';
+            out_msg('Peer toggle-reset не выполнен: ' . ($peerReset['message'] ?? $peerReset['reason'] ?? 'unknown'), $silent);
+            out_msg('Пробую обычный перезапуск WireGuard', $silent);
+
+            $restart = restart_wireguard();
+
+            if ($restart['ok']) {
+                out_msg('WireGuard перезапущен: ' . $restart['command'], $silent);
+                $message = 'WireGuard деградация, toggle-reset не выполнен, выполнен обычный перезапуск';
+                $state = 'degraded_restart_fallback';
+            } else {
+                out_msg('Не удалось перезапустить WireGuard', $silent);
+                $message = 'WireGuard деградация, перезапуск не выполнен';
+                $state = 'degraded_restart_failed';
+            }
         }
 
         write_status([
@@ -435,11 +762,12 @@ try {
             'watch_hosts' => $watchHosts,
             'missing_networks' => $missingNetworks,
             'unreachable_hosts' => $unreachableHosts,
+            'peer_reset' => $peerReset,
             'restart' => $restart,
             'source' => 'config.xml'
         ]);
 
-        exit($restart['ok'] ? 1 : 2);
+        exit((!empty($peerReset['ok']) || ($restart !== null && !empty($restart['ok']))) ? 1 : 2);
     }
 
     out_msg('WireGuard OK', $silent);
