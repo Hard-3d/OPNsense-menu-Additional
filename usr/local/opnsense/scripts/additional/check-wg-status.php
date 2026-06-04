@@ -125,8 +125,11 @@ function collect_wireguard_clients_recursive(SimpleXMLElement $node, array &$cli
     if (isset($node->tunneladdress)) {
         $clients[] = [
             'enabled' => xml_bool_enabled($node),
+            'uuid' => xml_value($node, 'uuid', ''),
             'name' => xml_value($node, 'name', xml_value($node, 'description', '')),
             'tunneladdress' => xml_value($node, 'tunneladdress'),
+            'serveraddress' => xml_value($node, 'serveraddress', ''),
+            'serverport' => xml_value($node, 'serverport', ''),
         ];
     }
 
@@ -374,15 +377,103 @@ function dom_node_path(DOMElement $node): string
     return '/' . implode('/', $parts);
 }
 
+function dom_node_uuid(DOMElement $node): string
+{
+    foreach (['uuid', 'id'] as $attr) {
+        if ($node->hasAttribute($attr)) {
+            $value = trim((string)$node->getAttribute($attr));
+
+            if ($value !== '') {
+                return $value;
+            }
+        }
+    }
+
+    return dom_direct_child_text($node, ['uuid', 'id'], '');
+}
+
+function dom_endpoint_host(DOMElement $node): string
+{
+    $serverAddress = dom_direct_child_text($node, [
+        'serveraddress',
+        'server_address',
+        'endpointaddress',
+        'endpoint_address',
+        'endpointhost',
+        'endpoint_host',
+    ], '');
+
+    if ($serverAddress !== '') {
+        if (preg_match('/^\[([^\]]+)\](?::\d+)?$/', $serverAddress, $m)) {
+            return $m[1];
+        }
+
+        if (preg_match('/^([^:]+):\d+$/', $serverAddress, $m)) {
+            return $m[1];
+        }
+
+        return $serverAddress;
+    }
+
+    $endpoint = dom_direct_child_text($node, [
+        'endpoint',
+        'serverendpoint',
+        'peerendpoint',
+    ], '');
+
+    if ($endpoint !== '') {
+        if (preg_match('/^\[([^\]]+)\](?::\d+)?$/', $endpoint, $m)) {
+            return $m[1];
+        }
+
+        if (preg_match('/^([^:]+):\d+$/', $endpoint, $m)) {
+            return $m[1];
+        }
+
+        return $endpoint;
+    }
+
+    return '';
+}
+
+function dom_endpoint_port(DOMElement $node): string
+{
+    $port = dom_direct_child_text($node, [
+        'serverport',
+        'server_port',
+        'endpointport',
+        'endpoint_port',
+    ], '');
+
+    if ($port !== '') {
+        return $port;
+    }
+
+    $endpoint = dom_direct_child_text($node, [
+        'endpoint',
+        'serverendpoint',
+        'peerendpoint',
+    ], '');
+
+    if ($endpoint !== '' && preg_match('/:(\d+)$/', $endpoint, $m)) {
+        return $m[1];
+    }
+
+    return '';
+}
+
 function collect_wireguard_clients_dom_recursive(DOMElement $node, array &$clients): void
 {
     if (dom_direct_child($node, ['tunneladdress']) !== null) {
         $clients[] = [
             'node' => $node,
             'path' => dom_node_path($node),
+            'uuid' => dom_node_uuid($node),
             'enabled' => dom_node_enabled($node),
             'name' => dom_direct_child_text($node, ['name', 'description', 'descr'], ''),
             'tunneladdress' => dom_direct_child_text($node, ['tunneladdress'], ''),
+            'serveraddress' => dom_endpoint_host($node),
+            'serverport' => dom_endpoint_port($node),
         ];
     }
 
@@ -446,6 +537,12 @@ function client_matches_degradation(array $client, array $missingNetworks, array
         }
     }
 
+    $serverAddress = trim((string)($client['serveraddress'] ?? ''));
+
+    if ($serverAddress !== '' && in_array($serverAddress, $unreachableHosts, true)) {
+        return true;
+    }
+
     return false;
 }
 
@@ -471,36 +568,95 @@ function save_config_dom(DOMDocument $dom): void
     @chmod(OPN_CONFIG_FILE, 0600);
 }
 
-function apply_wireguard_config(string $phase): array
+function apply_wireguard_config(string $phase, array $affected = []): array
 {
-    $commands = [
+    $commands = [];
+
+    /*
+     * OPNsense WireGuard configctl actions may operate per instance UUID.
+     * The GUI-like toggle alone is not enough on some installations; therefore
+     * we first try per-UUID stop/start/restart and then run global reconfigure.
+     */
+    foreach ($affected as $client) {
+        $uuid = trim((string)($client['uuid'] ?? ''));
+
+        if ($uuid === '') {
+            continue;
+        }
+
+        if ($phase === 'disable') {
+            $commands[] = [
+                'command' => '/usr/local/sbin/configctl wireguard stop ' . escapeshellarg($uuid),
+                'scope' => 'uuid',
+                'uuid' => $uuid,
+            ];
+        } elseif ($phase === 'enable') {
+            $commands[] = [
+                'command' => '/usr/local/sbin/configctl wireguard start ' . escapeshellarg($uuid),
+                'scope' => 'uuid',
+                'uuid' => $uuid,
+            ];
+            $commands[] = [
+                'command' => '/usr/local/sbin/configctl wireguard restart ' . escapeshellarg($uuid),
+                'scope' => 'uuid',
+                'uuid' => $uuid,
+            ];
+        }
+    }
+
+    $globalCommands = [
         '/usr/local/sbin/configctl wireguard reconfigure',
         '/usr/local/sbin/configctl wireguard restart',
+        '/usr/local/sbin/configctl wireguard reload',
         '/usr/local/etc/rc.d/wireguard restart',
         '/usr/sbin/service wireguard restart',
     ];
 
-    $attempts = [];
+    foreach ($globalCommands as $command) {
+        $commands[] = [
+            'command' => $command,
+            'scope' => 'global',
+            'uuid' => '',
+        ];
+    }
 
-    foreach ($commands as $command) {
+    $attempts = [];
+    $ok = false;
+
+    foreach ($commands as $item) {
+        $command = $item['command'];
         $binary = preg_split('/\s+/', $command)[0] ?? '';
 
         if ($binary === '' || !is_executable($binary)) {
-            $attempts[] = ['phase' => $phase, 'command' => $command, 'exit_code' => 127, 'output' => 'binary not executable'];
+            $attempts[] = [
+                'phase' => $phase,
+                'scope' => $item['scope'],
+                'uuid' => $item['uuid'],
+                'command' => $command,
+                'exit_code' => 127,
+                'output' => 'binary not executable',
+            ];
             continue;
         }
 
         $result = run_command($command);
         $result['phase'] = $phase;
+        $result['scope'] = $item['scope'];
+        $result['uuid'] = $item['uuid'];
         $result['command'] = $command;
         $attempts[] = $result;
 
         if ((int)$result['exit_code'] === 0) {
-            return ['ok' => true, 'phase' => $phase, 'command' => $command, 'attempts' => $attempts];
+            $ok = true;
         }
     }
 
-    return ['ok' => false, 'phase' => $phase, 'command' => '', 'attempts' => $attempts];
+    return [
+        'ok' => $ok,
+        'phase' => $phase,
+        'command' => $ok ? 'multiple' : '',
+        'attempts' => $attempts,
+    ];
 }
 
 function reset_wireguard_peers_by_toggle(array $missingNetworks, array $unreachableHosts): array
@@ -519,7 +675,12 @@ function reset_wireguard_peers_by_toggle(array $missingNetworks, array $unreacha
         }
     }
 
-    if (empty($affected) && !empty($unreachableHosts)) {
+    if (empty($affected) && (!empty($unreachableHosts) || !empty($missingNetworks))) {
+        /*
+         * If exact matching failed, reset all active WG clients.
+         * This is safer than doing only a global service restart because it
+         * reproduces the working manual action: disable peer, apply, enable, apply.
+         */
         foreach ($clients as $client) {
             if (!empty($client['enabled'])) {
                 $affected[] = $client;
@@ -546,14 +707,17 @@ function reset_wireguard_peers_by_toggle(array $missingNetworks, array $unreacha
 
         $affectedInfo[] = [
             'name' => $client['name'] !== '' ? $client['name'] : $client['path'],
+            'uuid' => $client['uuid'] ?? '',
             'path' => $client['path'],
             'tunneladdress' => $client['tunneladdress'],
+            'serveraddress' => $client['serveraddress'] ?? '',
+            'serverport' => $client['serverport'] ?? '',
         ];
     }
 
     save_config_dom($dom);
-    $disableApply = apply_wireguard_config('disable');
-    sleep(2);
+    $disableApply = apply_wireguard_config('disable', $affected);
+    sleep(3);
 
     foreach ($affected as $client) {
         /** @var DOMElement $node */
@@ -562,8 +726,8 @@ function reset_wireguard_peers_by_toggle(array $missingNetworks, array $unreacha
     }
 
     save_config_dom($dom);
-    $enableApply = apply_wireguard_config('enable');
-    sleep(2);
+    $enableApply = apply_wireguard_config('enable', $affected);
+    sleep(3);
 
     return [
         'ok' => !empty($enableApply['ok']),
@@ -573,6 +737,7 @@ function reset_wireguard_peers_by_toggle(array $missingNetworks, array $unreacha
             : 'Peer toggle-reset выполнен, но apply после включения завершился ошибкой',
         'backup' => $backup,
         'affected' => $affectedInfo,
+        'clients_found' => count($clients),
         'disable_apply' => $disableApply,
         'enable_apply' => $enableApply,
     ];
@@ -588,6 +753,7 @@ function restart_wireguard(): array
     $commands = [
         '/usr/local/sbin/configctl wireguard restart',
         '/usr/local/sbin/configctl wireguard reconfigure',
+        '/usr/local/sbin/configctl wireguard reload',
         '/usr/local/etc/rc.d/wireguard restart',
         '/usr/sbin/service wireguard restart',
     ];
