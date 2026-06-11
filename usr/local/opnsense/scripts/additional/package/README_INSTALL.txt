@@ -1,8 +1,8 @@
-OPNsense Additional Menu v0.1.42
+OPNsense Additional Menu v0.1.43
 
 Установка:
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.42-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.43-root.zip
 chmod 755 /install.sh
 /install.sh
 
@@ -22,7 +22,7 @@ Logout -> Login
 Для GitHub:
 - распакуйте архив в локальную папку репозитория;
 - сделайте git add/commit/push;
-- создайте Release v0.1.42;
+- создайте Release v0.1.43;
 - загрузите этот же root ZIP как release asset.
 
 
@@ -31,3 +31,8 @@ Logout -> Login
 После установки служебные файлы `install.sh`, `README.md`, `README_INSTALL.txt`, `.gitignore` удаляются из корня `/` и сохраняются в `/usr/local/opnsense/scripts/additional/package/`.
 
 После выполнения install.sh служебные файлы будут перенесены в `/usr/local/opnsense/scripts/additional/package/` и удалены из корня `/`.
+
+GeoIP update:
+- используется только MMDB;
+- можно указать до 3 прямых URL .mmdb;
+- если первый источник недоступен, будет использован следующий.

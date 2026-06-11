@@ -5,7 +5,7 @@
 ## Разделы
 
 - **Ethname** — управление `/etc/rc.conf.d/ethname`, установка `ethname` при первом открытии.
-- **GeoIP update** — обновление GeoIP alias-баз из GitHub release/download URL.
+- **GeoIP update** — скачивание GeoIP MMDB по трём прямым URL с fallback.
 - **Check VPN status** — проверка WireGuard и Tailscale, статус Cron.
 - **Check WAN** — контроль потерь WAN gateway и переключение priority.
 - **udp2raw** — управление udp2raw client/server instances без правки WireGuard service files.
@@ -18,7 +18,7 @@
 
 ```sh
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.42-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.43-root.zip
 chmod 755 /install.sh
 /install.sh
 ```
@@ -45,14 +45,14 @@ usr/local/opnsense/...
 
 Пример:
 
-- tag: `v0.1.42`
-- asset: `opnsense-additional-menu-v0.1.42-root.zip`
+- tag: `v0.1.43`
+- asset: `opnsense-additional-menu-v0.1.43-root.zip`
 
 В самой странице **Update** укажите:
 
 ```text
 Repository URL: https://github.com/OWNER/REPO
-Release asset name: opnsense-additional-menu-v0.1.42-root.zip
+Release asset name: opnsense-additional-menu-v0.1.43-root.zip
 ```
 
 Если поле **Release asset name** оставить пустым, updater попробует установить GitHub source ZIP latest release. Это тоже поддерживается, если в корне репозитория есть `install.sh`.
@@ -68,7 +68,7 @@ Release asset name: opnsense-additional-menu-v0.1.42-root.zip
 Для новой версии:
 
 1. Измените файл `usr/local/opnsense/scripts/additional/VERSION`.
-2. Создайте новый git tag, например `v0.1.42`.
+2. Создайте новый git tag, например `v0.1.43`.
 3. Соберите новый root ZIP.
 4. Загрузите ZIP в GitHub Release.
 
@@ -82,11 +82,12 @@ Release asset name: opnsense-additional-menu-v0.1.42-root.zip
 После установки служебные файлы `install.sh`, `README.md`, `README_INSTALL.txt`, `.gitignore` удаляются из корня `/` и сохраняются в `/usr/local/opnsense/scripts/additional/package/`.
 
 
-## v0.1.42
+## v0.1.43
 
-- GeoIP update переведён со старого `mamamialezatoz/geoip-database` на `runetfreedom/russia-blocked-geoip`.
-- URL в настройках автоматически мигрируется на `https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/text/`.
-- Добавлен разбор готовых `text/*.txt` списков из ветки `release`; старый CSV-режим оставлен как fallback для совместимых источников.
+- GeoIP update переведён в режим MMDB-only.
+- В настройках оставлены три прямые ссылки на `.mmdb`: основной источник и два резервных.
+- Updater пробует источники по очереди и устанавливает первый успешно скачанный файл в `/usr/local/share/GeoIP/runetfreedom-Country.mmdb`.
+- Старые настройки `base_url`, `mmdb_url`, `download_mmdb` автоматически мигрируют в новый формат `mmdb_urls`.
 
 ## v0.1.40
 

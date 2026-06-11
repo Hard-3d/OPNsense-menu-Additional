@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Installing OPNsense Additional Menu v0.1.41..."
+echo "Installing OPNsense Additional Menu v0.1.43..."
 
 # ownership
 chown -R root:wheel /usr/local/opnsense/mvc/app/models/OPNsense/Additional 2>/dev/null || true
@@ -73,16 +73,52 @@ php -l /usr/local/opnsense/scripts/additional/additional-scheduler.php
 php -l /usr/local/opnsense/scripts/additional/wireguard-peers-manager.php
 php -l /usr/local/opnsense/scripts/additional/udp2raw-manager.php
 
-# migrate GeoIP source settings away from the discontinued mamamialezatoz endpoint
+# migrate GeoIP source settings to MMDB-only fallback sources
 GEOIP_CONFIG="/usr/local/opnsense/scripts/additional/geoip_update.json"
-GEOIP_DEFAULT="https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/text/"
 GEOIP_MMDB_DEFAULT="https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb"
-if [ ! -f "${GEOIP_CONFIG}" ] || grep -Eq 'mamamialezatoz|geoip-database|github.com/runetfreedom/russia-blocked-geoip/releases|archive/refs/heads/release.zip' "${GEOIP_CONFIG}" 2>/dev/null; then
-    mkdir -p "$(dirname "${GEOIP_CONFIG}")"
-    printf '{\n    "base_url": "%s",\n    "mmdb_url": "%s",\n    "download_mmdb": true\n}\n' "${GEOIP_DEFAULT}" "${GEOIP_MMDB_DEFAULT}" > "${GEOIP_CONFIG}"
-    chown root:wheel "${GEOIP_CONFIG}" 2>/dev/null || true
-    chmod 644 "${GEOIP_CONFIG}" 2>/dev/null || true
-fi
+mkdir -p "$(dirname "${GEOIP_CONFIG}")"
+php <<'PHP'
+<?php
+$file = '/usr/local/opnsense/scripts/additional/geoip_update.json';
+$default = 'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb';
+$data = [];
+if (is_readable($file)) {
+    $decoded = json_decode((string)file_get_contents($file), true);
+    if (is_array($decoded)) {
+        $data = $decoded;
+    }
+}
+$urls = [];
+if (isset($data['mmdb_urls']) && is_array($data['mmdb_urls'])) {
+    foreach ($data['mmdb_urls'] as $url) {
+        $urls[] = (string)$url;
+    }
+}
+if (isset($data['mmdb_url'])) {
+    $urls[] = (string)$data['mmdb_url'];
+}
+if (isset($data['base_url']) && preg_match('~\.mmdb(?:$|[?&#])~i', (string)$data['base_url'])) {
+    $urls[] = (string)$data['base_url'];
+}
+$clean = [];
+foreach ($urls as $url) {
+    $url = trim($url);
+    if ($url !== '' && preg_match('#^https?://#i', $url) && preg_match('~\.mmdb(?:$|[?&#])~i', $url)) {
+        $clean[] = $url;
+    }
+}
+if (empty($clean)) {
+    $clean[] = $default;
+}
+$clean = array_slice(array_pad($clean, 3, ''), 0, 3);
+$json = json_encode(['mmdb_urls' => $clean], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+if ($json !== false) {
+    file_put_contents($file, $json . PHP_EOL, LOCK_EX);
+    chmod($file, 0644);
+}
+PHP
+chown root:wheel "${GEOIP_CONFIG}" 2>/dev/null || true
+chmod 644 "${GEOIP_CONFIG}" 2>/dev/null || true
 
 # ensure scheduler config contains all current tasks
 /usr/local/opnsense/scripts/additional/additional-scheduler.php --status --json >/dev/null 2>&1 || true
