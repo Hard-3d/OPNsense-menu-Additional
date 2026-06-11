@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Installing OPNsense Additional Menu v0.1.43..."
+echo "Installing OPNsense Additional Menu v0.1.44..."
 
 # ownership
 chown -R root:wheel /usr/local/opnsense/mvc/app/models/OPNsense/Additional 2>/dev/null || true
@@ -76,11 +76,17 @@ php -l /usr/local/opnsense/scripts/additional/udp2raw-manager.php
 # migrate GeoIP source settings to MMDB-only fallback sources
 GEOIP_CONFIG="/usr/local/opnsense/scripts/additional/geoip_update.json"
 GEOIP_MMDB_DEFAULT="https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb"
+GEOIP_MMDB_DEFAULT2="https://git.io/GeoLite2-Country.mmdb"
+GEOIP_MMDB_DEFAULT3="https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb"
 mkdir -p "$(dirname "${GEOIP_CONFIG}")"
 php <<'PHP'
 <?php
 $file = '/usr/local/opnsense/scripts/additional/geoip_update.json';
-$default = 'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb';
+$defaults = [
+    'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb',
+    'https://git.io/GeoLite2-Country.mmdb',
+    'https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb'
+];
 $data = [];
 if (is_readable($file)) {
     $decoded = json_decode((string)file_get_contents($file), true);
@@ -108,7 +114,16 @@ foreach ($urls as $url) {
     }
 }
 if (empty($clean)) {
-    $clean[] = $default;
+    $clean = $defaults;
+} else {
+    foreach ($defaults as $defaultUrl) {
+        if (count($clean) >= 3) {
+            break;
+        }
+        if (!in_array($defaultUrl, $clean, true)) {
+            $clean[] = $defaultUrl;
+        }
+    }
 }
 $clean = array_slice(array_pad($clean, 3, ''), 0, 3);
 $json = json_encode(['mmdb_urls' => $clean], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);

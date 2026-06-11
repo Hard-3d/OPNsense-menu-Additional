@@ -18,7 +18,7 @@
 
 ```sh
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.43-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.44-root.zip
 chmod 755 /install.sh
 /install.sh
 ```
@@ -45,14 +45,14 @@ usr/local/opnsense/...
 
 Пример:
 
-- tag: `v0.1.43`
-- asset: `opnsense-additional-menu-v0.1.43-root.zip`
+- tag: `v0.1.44`
+- asset: `opnsense-additional-menu-v0.1.44-root.zip`
 
 В самой странице **Update** укажите:
 
 ```text
 Repository URL: https://github.com/OWNER/REPO
-Release asset name: opnsense-additional-menu-v0.1.43-root.zip
+Release asset name: opnsense-additional-menu-v0.1.44-root.zip
 ```
 
 Если поле **Release asset name** оставить пустым, updater попробует установить GitHub source ZIP latest release. Это тоже поддерживается, если в корне репозитория есть `install.sh`.
@@ -68,7 +68,7 @@ Release asset name: opnsense-additional-menu-v0.1.43-root.zip
 Для новой версии:
 
 1. Измените файл `usr/local/opnsense/scripts/additional/VERSION`.
-2. Создайте новый git tag, например `v0.1.43`.
+2. Создайте новый git tag, например `v0.1.44`.
 3. Соберите новый root ZIP.
 4. Загрузите ZIP в GitHub Release.
 
@@ -81,6 +81,14 @@ Release asset name: opnsense-additional-menu-v0.1.43-root.zip
 
 После установки служебные файлы `install.sh`, `README.md`, `README_INSTALL.txt`, `.gitignore` удаляются из корня `/` и сохраняются в `/usr/local/opnsense/scripts/additional/package/`.
 
+
+## v0.1.44
+
+- Дефолтные MMDB fallback-источники изменены на три URL:
+  1. `https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb`
+  2. `https://git.io/GeoLite2-Country.mmdb`
+  3. `https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb`
+- Installer сохраняет пользовательские источники и заполняет пустые fallback-слоты дефолтными URL.
 
 ## v0.1.43
 

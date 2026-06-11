@@ -672,7 +672,7 @@ $(document).ready(function() {
                        class="form-control"
                        style="width: 820px !important; max-width: 100% !important; display: block;"
                        spellcheck="false"
-                       placeholder="https://example.net/Country.mmdb">
+                       placeholder="https://git.io/GeoLite2-Country.mmdb">
                 <span class="help-block">Резервный источник. Используется, если первый URL недоступен.</span>
             </div>
 
@@ -683,11 +683,11 @@ $(document).ready(function() {
                        class="form-control"
                        style="width: 820px !important; max-width: 100% !important; display: block;"
                        spellcheck="false"
-                       placeholder="https://mirror.example.org/Country.mmdb">
+                       placeholder="https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb">
                 <span class="help-block">Второй резервный источник. Пустые поля пропускаются.</span>
             </div>
 
-            <p class="help-block">Файл сохраняется как /usr/local/share/GeoIP/runetfreedom-Country.mmdb. Старые настройки base_url/mmdb_url автоматически мигрируют в MMDB URL #1.</p>
+            <p class="help-block">Файл сохраняется как /usr/local/share/GeoIP/runetfreedom-Country.mmdb. Старые настройки base_url/mmdb_url автоматически мигрируют, пустые источники заполняются дефолтными URL #1-#3.</p>
 
             <button id="btn_geoip_save_url" type="button" class="btn btn-default">
                 <i class="fa fa-save"></i>

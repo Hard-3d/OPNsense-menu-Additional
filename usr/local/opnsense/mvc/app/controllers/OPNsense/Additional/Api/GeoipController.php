@@ -11,8 +11,8 @@ class GeoipController extends ApiControllerBase
 
     private const DEFAULT_MMDB_URLS = [
         'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb',
-        '',
-        ''
+        'https://git.io/GeoLite2-Country.mmdb',
+        'https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb'
     ];
 
     private const UPDATE_SCRIPT = '/usr/local/opnsense/scripts/additional/updategeoip.php';
