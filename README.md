@@ -18,7 +18,7 @@
 
 ```sh
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.47-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.48-root.zip
 chmod 755 /install.sh
 /install.sh
 ```
@@ -45,14 +45,14 @@ usr/local/opnsense/...
 
 Пример:
 
-- tag: `v0.1.47`
-- asset: `opnsense-additional-menu-v0.1.47-root.zip`
+- tag: `v0.1.48`
+- asset: `opnsense-additional-menu-v0.1.48-root.zip`
 
 В самой странице **Update** укажите:
 
 ```text
 Repository URL: https://github.com/OWNER/REPO
-Release asset name: opnsense-additional-menu-v0.1.47-root.zip
+Release asset name: opnsense-additional-menu-v0.1.48-root.zip
 ```
 
 Если поле **Release asset name** оставить пустым, updater попробует установить GitHub source ZIP latest release. Это тоже поддерживается, если в корне репозитория есть `install.sh`.
@@ -68,7 +68,7 @@ Release asset name: opnsense-additional-menu-v0.1.47-root.zip
 Для новой версии:
 
 1. Измените файл `usr/local/opnsense/scripts/additional/VERSION`.
-2. Создайте новый git tag, например `v0.1.47`.
+2. Создайте новый git tag, например `v0.1.48`.
 3. Соберите новый root ZIP.
 4. Загрузите ZIP в GitHub Release.
 
@@ -82,12 +82,13 @@ Release asset name: opnsense-additional-menu-v0.1.47-root.zip
 После установки служебные файлы `install.sh`, `README.md`, `README_INSTALL.txt`, `.gitignore` удаляются из корня `/` и сохраняются в `/usr/local/opnsense/scripts/additional/package/`.
 
 
-## v0.1.47
+## v0.1.48
 
-- GeoIP MMDB-конвертер теперь создаёт OPNsense alias-файлы только для настоящих ISO 3166-1 alpha-2 country-кодов.
-- Технические категории из отдельных MMDB-источников, например `PRIVATE`, `RE_FILTER`, `RU_BLOCKED`, `RU_BLOCKED_COMMUNITY`, `RU_WHITELIST`, больше не попадают в `/usr/local/share/GeoIP/alias`.
-- При следующем обновлении старые не-country alias-файлы от предыдущей сборки будут удалены автоматически.
-- Сохранены три fallback-источника MMDB и конвертация в `/usr/local/share/GeoIP/alias/<COUNTRY>-IPv4|IPv6`.
+- На странице GeoIP update убран длинный служебный комментарий под MMDB-источниками.
+- Status WireGuard теперь проверяет маршруты из `Allowed IPs`/`Tunnel Address` WireGuard peers и ping для host IP.
+- При деградации выполняется последовательность, повторяющая ручное действие в UI: peer disable → apply → peer enable → apply.
+- Добавлена повторная проверка после восстановления: если маршруты и ping восстановились, статус становится `recovered_peer_toggle_reset`.
+- Для применения WireGuard добавлен официальный configctl action `wireguard configure` и fallback `filter reload`/restart.
 
 ## v0.1.44
 

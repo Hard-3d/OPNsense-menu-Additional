@@ -95,164 +95,6 @@ function split_ip_list(string $value): array
     return array_values(array_unique($result));
 }
 
-function xml_value(SimpleXMLElement $node, string $name, string $default = ''): string
-{
-    if (!isset($node->{$name})) {
-        return $default;
-    }
-
-    return trim((string)$node->{$name});
-}
-
-function xml_bool_enabled(SimpleXMLElement $node): bool
-{
-    /*
-     * Если enabled отсутствует, считаем запись активной.
-     * В разных версиях OPNsense модель WireGuard может отличаться,
-     * но tunneladdress у активного клиента нам всё равно нужен.
-     */
-    if (!isset($node->enabled)) {
-        return true;
-    }
-
-    $value = strtolower(trim((string)$node->enabled));
-
-    return in_array($value, ['1', 'true', 'yes', 'on'], true);
-}
-
-function collect_wireguard_clients_recursive(SimpleXMLElement $node, array &$clients): void
-{
-    if (isset($node->tunneladdress)) {
-        $clients[] = [
-            'enabled' => xml_bool_enabled($node),
-            'uuid' => xml_value($node, 'uuid', ''),
-            'name' => xml_value($node, 'name', xml_value($node, 'description', '')),
-            'tunneladdress' => xml_value($node, 'tunneladdress'),
-            'serveraddress' => xml_value($node, 'serveraddress', ''),
-            'serverport' => xml_value($node, 'serverport', ''),
-        ];
-    }
-
-    foreach ($node->children() as $child) {
-        collect_wireguard_clients_recursive($child, $clients);
-    }
-}
-
-function load_wireguard_clients_from_config(): array
-{
-    if (!is_readable(OPN_CONFIG_FILE)) {
-        throw new RuntimeException('Не удалось прочитать ' . OPN_CONFIG_FILE);
-    }
-
-    libxml_use_internal_errors(true);
-    $xml = simplexml_load_file(OPN_CONFIG_FILE);
-
-    if ($xml === false) {
-        $errors = [];
-
-        foreach (libxml_get_errors() as $error) {
-            $errors[] = trim($error->message);
-        }
-
-        libxml_clear_errors();
-
-        throw new RuntimeException('Ошибка чтения config.xml: ' . implode('; ', $errors));
-    }
-
-    $clients = [];
-
-    if (isset($xml->OPNsense)) {
-        collect_wireguard_clients_recursive($xml->OPNsense, $clients);
-    } else {
-        collect_wireguard_clients_recursive($xml, $clients);
-    }
-
-    return $clients;
-}
-
-function collect_current_routes(): array
-{
-    $routes = [];
-
-    $commands = [
-        '/usr/bin/netstat -rn -f inet',
-        '/usr/bin/netstat -rn -f inet6',
-    ];
-
-    foreach ($commands as $command) {
-        $output = [];
-        $exitCode = 0;
-
-        exec($command . ' 2>/dev/null', $output, $exitCode);
-
-        if ($exitCode !== 0) {
-            continue;
-        }
-
-        foreach ($output as $line) {
-            $line = trim((string)$line);
-
-            if ($line === '' || preg_match('/^(Routing|Internet|Destination|Expire|Netif)/i', $line)) {
-                continue;
-            }
-
-            $parts = preg_split('/\s+/', $line);
-
-            if ($parts === false || empty($parts[0])) {
-                continue;
-            }
-
-            $destination = trim((string)$parts[0]);
-
-            if ($destination === '' || $destination === 'default') {
-                continue;
-            }
-
-            $routes[] = $destination;
-        }
-    }
-
-    return array_values(array_unique($routes));
-}
-
-function route_destination_matches(string $expected, array $routes): bool
-{
-    if (in_array($expected, $routes, true)) {
-        return true;
-    }
-
-    /*
-     * netstat в FreeBSD иногда выводит сеть без CIDR для некоторых маршрутов.
-     * Поэтому дополнительно сравниваем IP-часть до slash.
-     */
-    $expectedBase = preg_replace('#/\d+$#', '', $expected);
-
-    foreach ($routes as $route) {
-        if ($route === $expectedBase) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function ping_host(string $ip): bool
-{
-    $binary = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? '/sbin/ping6' : '/sbin/ping';
-
-    if (!is_executable($binary)) {
-        $binary = '/sbin/ping';
-    }
-
-    $cmd = sprintf('%s -c 1 -W 1 %s >/dev/null 2>&1', escapeshellcmd($binary), escapeshellarg($ip));
-    $output = [];
-    $exitCode = 0;
-
-    exec($cmd, $output, $exitCode);
-
-    return $exitCode === 0;
-}
-
 function run_command(string $command): array
 {
     $output = [];
@@ -287,7 +129,6 @@ function load_config_dom(): DOMDocument
         }
 
         libxml_clear_errors();
-
         throw new RuntimeException('Ошибка чтения config.xml: ' . implode('; ', $errors));
     }
 
@@ -392,6 +233,25 @@ function dom_node_uuid(DOMElement $node): string
     return dom_direct_child_text($node, ['uuid', 'id'], '');
 }
 
+function endpoint_parse_host(string $value): string
+{
+    $value = trim($value);
+
+    if ($value === '') {
+        return '';
+    }
+
+    if (preg_match('/^\[([^\]]+)\](?::\d+)?$/', $value, $m)) {
+        return $m[1];
+    }
+
+    if (preg_match('/^([^:]+):(\d+)$/', $value, $m)) {
+        return $m[1];
+    }
+
+    return $value;
+}
+
 function dom_endpoint_host(DOMElement $node): string
 {
     $serverAddress = dom_direct_child_text($node, [
@@ -404,15 +264,7 @@ function dom_endpoint_host(DOMElement $node): string
     ], '');
 
     if ($serverAddress !== '') {
-        if (preg_match('/^\[([^\]]+)\](?::\d+)?$/', $serverAddress, $m)) {
-            return $m[1];
-        }
-
-        if (preg_match('/^([^:]+):\d+$/', $serverAddress, $m)) {
-            return $m[1];
-        }
-
-        return $serverAddress;
+        return endpoint_parse_host($serverAddress);
     }
 
     $endpoint = dom_direct_child_text($node, [
@@ -421,19 +273,7 @@ function dom_endpoint_host(DOMElement $node): string
         'peerendpoint',
     ], '');
 
-    if ($endpoint !== '') {
-        if (preg_match('/^\[([^\]]+)\](?::\d+)?$/', $endpoint, $m)) {
-            return $m[1];
-        }
-
-        if (preg_match('/^([^:]+):\d+$/', $endpoint, $m)) {
-            return $m[1];
-        }
-
-        return $endpoint;
-    }
-
-    return '';
+    return endpoint_parse_host($endpoint);
 }
 
 function dom_endpoint_port(DOMElement $node): string
@@ -462,88 +302,392 @@ function dom_endpoint_port(DOMElement $node): string
     return '';
 }
 
-function collect_wireguard_clients_dom_recursive(DOMElement $node, array &$clients): void
+function dom_peer_allowed_ips(DOMElement $node): string
 {
-    if (dom_direct_child($node, ['tunneladdress']) !== null) {
-        $clients[] = [
+    return dom_direct_child_text($node, [
+        'allowedips',
+        'allowed_ips',
+        'allowedip',
+        'allowed_ip',
+        'tunneladdress',
+        'tunnel_address',
+    ], '');
+}
+
+function dom_peer_name(DOMElement $node, string $fallback): string
+{
+    $name = dom_direct_child_text($node, ['name', 'description', 'descr'], '');
+
+    return $name !== '' ? $name : $fallback;
+}
+
+function dom_peer_public_key(DOMElement $node): string
+{
+    return dom_direct_child_text($node, ['publickey', 'public_key', 'pubkey', 'pub_key'], '');
+}
+
+function is_wireguard_peer_candidate(DOMElement $node): bool
+{
+    $allowed = dom_peer_allowed_ips($node);
+
+    if ($allowed === '') {
+        return false;
+    }
+
+    $tag = strtolower($node->nodeName);
+    $endpoint = dom_endpoint_host($node);
+    $publicKey = dom_peer_public_key($node);
+
+    if (strpos($tag, 'peer') !== false || strpos($tag, 'client') !== false || strpos($tag, 'endpoint') !== false) {
+        return true;
+    }
+
+    if ($endpoint !== '' && $publicKey !== '') {
+        return true;
+    }
+
+    return false;
+}
+
+function collect_wireguard_peers_recursive(DOMElement $node, array &$peers): void
+{
+    if (is_wireguard_peer_candidate($node)) {
+        $path = dom_node_path($node);
+        $uuid = dom_node_uuid($node);
+        $publicKey = dom_peer_public_key($node);
+        $id = $uuid !== '' ? $uuid : substr(sha1($path . '|' . $publicKey), 0, 16);
+
+        $peers[] = [
             'node' => $node,
-            'path' => dom_node_path($node),
-            'uuid' => dom_node_uuid($node),
+            'path' => $path,
+            'uuid' => $uuid,
+            'id' => $id,
             'enabled' => dom_node_enabled($node),
-            'name' => dom_direct_child_text($node, ['name', 'description', 'descr'], ''),
-            'tunneladdress' => dom_direct_child_text($node, ['tunneladdress'], ''),
+            'name' => dom_peer_name($node, $id),
+            'node_name' => $node->nodeName,
+            'allowed_ips' => dom_peer_allowed_ips($node),
             'serveraddress' => dom_endpoint_host($node),
             'serverport' => dom_endpoint_port($node),
+            'public_key_short' => $publicKey !== '' ? substr($publicKey, 0, 8) . '...' . substr($publicKey, -6) : '',
         ];
     }
 
     foreach ($node->childNodes as $child) {
         if ($child instanceof DOMElement) {
-            collect_wireguard_clients_dom_recursive($child, $clients);
+            collect_wireguard_peers_recursive($child, $peers);
         }
     }
 }
 
-function load_wireguard_clients_dom(DOMDocument $dom): array
+function load_wireguard_peers_dom(DOMDocument $dom): array
 {
-    $clients = [];
+    $peers = [];
     $wireguardNodes = $dom->getElementsByTagName('wireguard');
 
     if ($wireguardNodes->length > 0) {
         foreach ($wireguardNodes as $wireguard) {
             if ($wireguard instanceof DOMElement) {
-                collect_wireguard_clients_dom_recursive($wireguard, $clients);
+                collect_wireguard_peers_recursive($wireguard, $peers);
             }
         }
     } elseif ($dom->documentElement instanceof DOMElement) {
-        collect_wireguard_clients_dom_recursive($dom->documentElement, $clients);
+        collect_wireguard_peers_recursive($dom->documentElement, $peers);
     }
 
-    return $clients;
-}
+    $seen = [];
+    $result = [];
 
-function tunneladdress_items(string $tunneladdress): array
-{
-    $items = [];
-
-    foreach (explode(',', $tunneladdress) as $addr) {
-        $addr = trim($addr);
-
-        if ($addr === '' || $addr === '0.0.0.0/0' || $addr === '::/0') {
+    foreach ($peers as $peer) {
+        $key = (string)$peer['id'];
+        if (isset($seen[$key])) {
             continue;
         }
-
-        if (preg_match('~/32$~', $addr)) {
-            $items[] = ['type' => 'host', 'value' => substr($addr, 0, -3), 'raw' => $addr];
-        } elseif (preg_match('~/128$~', $addr)) {
-            $items[] = ['type' => 'host', 'value' => substr($addr, 0, -4), 'raw' => $addr];
-        } else {
-            $items[] = ['type' => 'network', 'value' => $addr, 'raw' => $addr];
-        }
+        $seen[$key] = true;
+        $result[] = $peer;
     }
 
-    return $items;
+    return $result;
 }
 
-function client_matches_degradation(array $client, array $missingNetworks, array $unreachableHosts): bool
+function cidr_is_valid(string $value): bool
 {
-    foreach (tunneladdress_items((string)$client['tunneladdress']) as $item) {
-        if ($item['type'] === 'network' && in_array($item['value'], $missingNetworks, true)) {
-            return true;
-        }
-
-        if ($item['type'] === 'host' && in_array($item['value'], $unreachableHosts, true)) {
-            return true;
-        }
+    if (!preg_match('#^([^/]+)/(\d{1,3})$#', $value, $m)) {
+        return false;
     }
 
-    $serverAddress = trim((string)($client['serveraddress'] ?? ''));
+    $ip = $m[1];
+    $prefix = (int)$m[2];
 
-    if ($serverAddress !== '' && in_array($serverAddress, $unreachableHosts, true)) {
-        return true;
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        return $prefix >= 0 && $prefix <= 32;
+    }
+
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+        return $prefix >= 0 && $prefix <= 128;
     }
 
     return false;
+}
+
+function target_items_from_allowed_ips(string $allowedIps): array
+{
+    $items = [];
+    $parts = preg_split('/[,\s]+/', $allowedIps);
+
+    if ($parts === false) {
+        return [];
+    }
+
+    foreach ($parts as $raw) {
+        $raw = trim((string)$raw);
+        $raw = trim($raw, "\"'");
+
+        if ($raw === '' || $raw === '0.0.0.0/0' || $raw === '::/0') {
+            continue;
+        }
+
+        if (filter_var($raw, FILTER_VALIDATE_IP)) {
+            $items[] = [
+                'raw' => $raw,
+                'kind' => 'host',
+                'host' => $raw,
+                'route' => $raw,
+            ];
+            continue;
+        }
+
+        if (!cidr_is_valid($raw)) {
+            continue;
+        }
+
+        [$ip, $prefixText] = explode('/', $raw, 2);
+        $prefix = (int)$prefixText;
+        $isV6 = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
+        $hostPrefix = $isV6 ? 128 : 32;
+
+        $items[] = [
+            'raw' => $raw,
+            'kind' => $prefix === $hostPrefix ? 'host' : 'network',
+            'host' => $prefix === $hostPrefix ? $ip : '',
+            'route' => $raw,
+        ];
+    }
+
+    $unique = [];
+    $result = [];
+
+    foreach ($items as $item) {
+        $key = $item['raw'] . '|' . $item['kind'];
+        if (isset($unique[$key])) {
+            continue;
+        }
+        $unique[$key] = true;
+        $result[] = $item;
+    }
+
+    return $result;
+}
+
+function collect_current_routes(): array
+{
+    $routes = [];
+    $commands = [
+        '/usr/bin/netstat -rn -f inet',
+        '/usr/bin/netstat -rn -f inet6',
+    ];
+
+    foreach ($commands as $command) {
+        $output = [];
+        $exitCode = 0;
+
+        exec($command . ' 2>/dev/null', $output, $exitCode);
+
+        if ($exitCode !== 0) {
+            continue;
+        }
+
+        foreach ($output as $line) {
+            $line = trim((string)$line);
+
+            if ($line === '' || preg_match('/^(Routing|Internet|Destination|Expire|Netif|Name|Use|Flags)/i', $line)) {
+                continue;
+            }
+
+            $parts = preg_split('/\s+/', $line);
+
+            if ($parts === false || empty($parts[0])) {
+                continue;
+            }
+
+            $destination = trim((string)$parts[0]);
+
+            if ($destination === '' || $destination === 'default') {
+                continue;
+            }
+
+            $routes[] = $destination;
+        }
+    }
+
+    return array_values(array_unique($routes));
+}
+
+function route_destination_matches(string $expected, array $routes): bool
+{
+    if ($expected === '' || in_array($expected, $routes, true)) {
+        return $expected !== '';
+    }
+
+    $candidates = [$expected];
+
+    if (filter_var($expected, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        $candidates[] = $expected . '/32';
+    } elseif (filter_var($expected, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+        $candidates[] = $expected . '/128';
+    }
+
+    if (preg_match('#^([^/]+)/(\d{1,3})$#', $expected, $m)) {
+        $candidates[] = $m[1];
+    }
+
+    foreach ($routes as $route) {
+        foreach ($candidates as $candidate) {
+            if ($route === $candidate) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+function ping_host_once(string $ip): bool
+{
+    $binary = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? '/sbin/ping6' : '/sbin/ping';
+
+    if (!is_executable($binary)) {
+        $binary = '/sbin/ping';
+    }
+
+    $cmd = sprintf('%s -c 1 -W 1 %s >/dev/null 2>&1', escapeshellcmd($binary), escapeshellarg($ip));
+    $output = [];
+    $exitCode = 0;
+
+    exec($cmd, $output, $exitCode);
+
+    return $exitCode === 0;
+}
+
+function ping_host(string $ip, int $attempts = 2): bool
+{
+    if (!filter_var($ip, FILTER_VALIDATE_IP)) {
+        return false;
+    }
+
+    for ($i = 0; $i < $attempts; $i++) {
+        if (ping_host_once($ip)) {
+            return true;
+        }
+        usleep(250000);
+    }
+
+    return false;
+}
+
+function evaluate_wireguard_peers(array $peers, array $extraHosts = []): array
+{
+    $routes = collect_current_routes();
+    $watchNetworks = [];
+    $watchHosts = [];
+    $missingNetworks = [];
+    $unreachableHosts = [];
+    $peerResults = [];
+    $affectedIds = [];
+
+    foreach ($peers as $peer) {
+        $items = target_items_from_allowed_ips((string)$peer['allowed_ips']);
+        $peerMissing = [];
+        $peerUnreachable = [];
+        $peerWatchNetworks = [];
+        $peerWatchHosts = [];
+
+        if (empty($peer['enabled'])) {
+            $peerResults[] = [
+                'id' => $peer['id'],
+                'name' => $peer['name'],
+                'enabled' => false,
+                'state' => 'disabled',
+                'allowed_ips' => $peer['allowed_ips'],
+                'watch_networks' => [],
+                'watch_hosts' => [],
+                'missing_networks' => [],
+                'unreachable_hosts' => [],
+            ];
+            continue;
+        }
+
+        foreach ($items as $item) {
+            if ($item['kind'] === 'host') {
+                $peerWatchHosts[] = $item['host'];
+                $watchHosts[] = $item['host'];
+            } else {
+                $peerWatchNetworks[] = $item['route'];
+                $watchNetworks[] = $item['route'];
+            }
+
+            if (!route_destination_matches((string)$item['route'], $routes)) {
+                $peerMissing[] = (string)$item['route'];
+                $missingNetworks[] = (string)$item['route'];
+            }
+
+            if ($item['kind'] === 'host' && !ping_host((string)$item['host'])) {
+                $peerUnreachable[] = (string)$item['host'];
+                $unreachableHosts[] = (string)$item['host'];
+            }
+        }
+
+        $state = 'ok';
+        if (!empty($peerMissing) || !empty($peerUnreachable)) {
+            $state = 'degraded';
+            $affectedIds[(string)$peer['id']] = true;
+        }
+
+        $peerResults[] = [
+            'id' => $peer['id'],
+            'uuid' => $peer['uuid'],
+            'name' => $peer['name'],
+            'path' => $peer['path'],
+            'enabled' => true,
+            'state' => $state,
+            'allowed_ips' => $peer['allowed_ips'],
+            'endpoint' => $peer['serveraddress'],
+            'watch_networks' => array_values(array_unique($peerWatchNetworks)),
+            'watch_hosts' => array_values(array_unique($peerWatchHosts)),
+            'missing_networks' => array_values(array_unique($peerMissing)),
+            'unreachable_hosts' => array_values(array_unique($peerUnreachable)),
+        ];
+    }
+
+    foreach ($extraHosts as $host) {
+        $host = trim((string)$host);
+        if ($host === '' || !filter_var($host, FILTER_VALIDATE_IP)) {
+            continue;
+        }
+        $watchHosts[] = $host;
+        if (!ping_host($host)) {
+            $unreachableHosts[] = $host;
+        }
+    }
+
+    return [
+        'routes' => $routes,
+        'watch_networks' => array_values(array_unique($watchNetworks)),
+        'watch_hosts' => array_values(array_unique($watchHosts)),
+        'missing_networks' => array_values(array_unique($missingNetworks)),
+        'unreachable_hosts' => array_values(array_unique($unreachableHosts)),
+        'peer_results' => $peerResults,
+        'affected_ids' => array_keys($affectedIds),
+    ];
 }
 
 function backup_opn_config(string $suffix): string
@@ -572,13 +716,8 @@ function apply_wireguard_config(string $phase, array $affected = []): array
 {
     $commands = [];
 
-    /*
-     * OPNsense WireGuard configctl actions may operate per instance UUID.
-     * The GUI-like toggle alone is not enough on some installations; therefore
-     * we first try per-UUID stop/start/restart and then run global reconfigure.
-     */
-    foreach ($affected as $client) {
-        $uuid = trim((string)($client['uuid'] ?? ''));
+    foreach ($affected as $peer) {
+        $uuid = trim((string)($peer['uuid'] ?? ''));
 
         if ($uuid === '') {
             continue;
@@ -605,8 +744,10 @@ function apply_wireguard_config(string $phase, array $affected = []): array
     }
 
     $globalCommands = [
-        '/usr/local/sbin/configctl wireguard reconfigure',
+        '/usr/local/sbin/configctl wireguard configure',
         '/usr/local/sbin/configctl wireguard restart',
+        '/usr/local/sbin/configctl filter reload',
+        '/usr/local/sbin/configctl wireguard reconfigure',
         '/usr/local/sbin/configctl wireguard reload',
         '/usr/local/etc/rc.d/wireguard restart',
         '/usr/sbin/service wireguard restart',
@@ -654,37 +795,36 @@ function apply_wireguard_config(string $phase, array $affected = []): array
     return [
         'ok' => $ok,
         'phase' => $phase,
-        'command' => $ok ? 'multiple' : '',
         'attempts' => $attempts,
     ];
 }
 
-function reset_wireguard_peers_by_toggle(array $missingNetworks, array $unreachableHosts): array
+function affected_peer_public_info(array $peer): array
 {
-    $dom = load_config_dom();
-    $clients = load_wireguard_clients_dom($dom);
-    $affected = [];
+    return [
+        'id' => $peer['id'],
+        'uuid' => $peer['uuid'],
+        'name' => $peer['name'] !== '' ? $peer['name'] : $peer['path'],
+        'path' => $peer['path'],
+        'node_name' => $peer['node_name'],
+        'allowed_ips' => $peer['allowed_ips'],
+        'endpoint' => $peer['serveraddress'],
+        'serverport' => $peer['serverport'],
+    ];
+}
 
-    foreach ($clients as $client) {
-        if (empty($client['enabled'])) {
+function reset_wireguard_peers_by_toggle(DOMDocument $dom, array $peers, array $affectedIds, bool $forceAll = false): array
+{
+    $affected = [];
+    $affectedLookup = array_fill_keys($affectedIds, true);
+
+    foreach ($peers as $peer) {
+        if (empty($peer['enabled'])) {
             continue;
         }
 
-        if (client_matches_degradation($client, $missingNetworks, $unreachableHosts)) {
-            $affected[] = $client;
-        }
-    }
-
-    if (empty($affected) && (!empty($unreachableHosts) || !empty($missingNetworks))) {
-        /*
-         * If exact matching failed, reset all active WG clients.
-         * This is safer than doing only a global service restart because it
-         * reproduces the working manual action: disable peer, apply, enable, apply.
-         */
-        foreach ($clients as $client) {
-            if (!empty($client['enabled'])) {
-                $affected[] = $client;
-            }
+        if ($forceAll || isset($affectedLookup[(string)$peer['id']])) {
+            $affected[] = $peer;
         }
     }
 
@@ -692,7 +832,7 @@ function reset_wireguard_peers_by_toggle(array $missingNetworks, array $unreacha
         return [
             'ok' => false,
             'reason' => 'no_affected_peers',
-            'message' => 'Не удалось определить peer для toggle-reset',
+            'message' => 'Не удалось определить WireGuard peer для disable/enable reset',
             'affected' => [],
         ];
     }
@@ -700,44 +840,36 @@ function reset_wireguard_peers_by_toggle(array $missingNetworks, array $unreacha
     $backup = backup_opn_config('before-toggle');
     $affectedInfo = [];
 
-    foreach ($affected as $client) {
+    foreach ($affected as $peer) {
         /** @var DOMElement $node */
-        $node = $client['node'];
+        $node = $peer['node'];
         dom_set_direct_child_text($node, 'enabled', '0');
-
-        $affectedInfo[] = [
-            'name' => $client['name'] !== '' ? $client['name'] : $client['path'],
-            'uuid' => $client['uuid'] ?? '',
-            'path' => $client['path'],
-            'tunneladdress' => $client['tunneladdress'],
-            'serveraddress' => $client['serveraddress'] ?? '',
-            'serverport' => $client['serverport'] ?? '',
-        ];
+        $affectedInfo[] = affected_peer_public_info($peer);
     }
 
     save_config_dom($dom);
     $disableApply = apply_wireguard_config('disable', $affected);
-    sleep(3);
+    sleep(5);
 
-    foreach ($affected as $client) {
+    foreach ($affected as $peer) {
         /** @var DOMElement $node */
-        $node = $client['node'];
+        $node = $peer['node'];
         dom_set_direct_child_text($node, 'enabled', '1');
     }
 
     save_config_dom($dom);
     $enableApply = apply_wireguard_config('enable', $affected);
-    sleep(3);
+    sleep(5);
 
     return [
         'ok' => !empty($enableApply['ok']),
         'reason' => !empty($enableApply['ok']) ? 'toggle_reset_done' : 'enable_apply_failed',
         'message' => !empty($enableApply['ok'])
-            ? 'Peer toggle-reset выполнен'
-            : 'Peer toggle-reset выполнен, но apply после включения завершился ошибкой',
+            ? 'WireGuard peer disable/apply/enable/apply выполнен'
+            : 'WireGuard peer disable/enable выполнен, но apply после включения завершился ошибкой',
         'backup' => $backup,
         'affected' => $affectedInfo,
-        'clients_found' => count($clients),
+        'force_all' => $forceAll,
         'disable_apply' => $disableApply,
         'enable_apply' => $enableApply,
     ];
@@ -745,13 +877,10 @@ function reset_wireguard_peers_by_toggle(array $missingNetworks, array $unreacha
 
 function restart_wireguard(): array
 {
-    /*
-     * Без API key/secret. Пробуем локальные способы, которые доступны root.
-     * На разных версиях OPNsense action может отличаться, поэтому список
-     * сделан каскадным.
-     */
     $commands = [
+        '/usr/local/sbin/configctl wireguard configure',
         '/usr/local/sbin/configctl wireguard restart',
+        '/usr/local/sbin/configctl filter reload',
         '/usr/local/sbin/configctl wireguard reconfigure',
         '/usr/local/sbin/configctl wireguard reload',
         '/usr/local/etc/rc.d/wireguard restart',
@@ -804,54 +933,36 @@ if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
 try {
     $vars = load_bash_vars(VARIABLES_FILE);
     $config = load_json_config();
-
-    $watchNetworks = [];
-    $watchHosts = [];
+    $extraHosts = [];
 
     if (!empty($vars['WIREGUARD_CHECK_PING'])) {
-        $watchHosts = array_merge($watchHosts, split_ip_list((string)$vars['WIREGUARD_CHECK_PING']));
+        $extraHosts = array_merge($extraHosts, split_ip_list((string)$vars['WIREGUARD_CHECK_PING']));
     }
 
     if (!empty($config['wireguard_check_ping'])) {
-        $watchHosts = array_merge($watchHosts, split_ip_list((string)$config['wireguard_check_ping']));
+        $extraHosts = array_merge($extraHosts, split_ip_list((string)$config['wireguard_check_ping']));
     }
 
-    out_msg('Получаю список WireGuard клиентов из /conf/config.xml', $silent);
-    $clients = load_wireguard_clients_from_config();
+    $extraHosts = array_values(array_unique($extraHosts));
 
-    foreach ($clients as $wg) {
-        if (empty($wg['enabled'])) {
-            continue;
-        }
+    out_msg('Получаю список WireGuard peers из /conf/config.xml', $silent);
+    $dom = load_config_dom();
+    $peers = load_wireguard_peers_dom($dom);
+    $activePeers = array_values(array_filter($peers, static fn(array $peer): bool => !empty($peer['enabled'])));
 
-        if (empty($wg['tunneladdress'])) {
-            continue;
-        }
+    out_msg('Проверяю маршруты из Allowed IPs/Tunnel Address и ping host IP', $silent);
+    $evaluation = evaluate_wireguard_peers($peers, $extraHosts);
 
-        $addresses = explode(',', (string)$wg['tunneladdress']);
-
-        foreach ($addresses as $addr) {
-            $addr = trim($addr);
-
-            if ($addr === '' || $addr === '0.0.0.0/0' || $addr === '::/0') {
-                continue;
-            }
-
-            if (preg_match('~/32$~', $addr)) {
-                $watchHosts[] = substr($addr, 0, -3);
-            } elseif (preg_match('~/128$~', $addr)) {
-                $watchHosts[] = substr($addr, 0, -4);
-            } else {
-                $watchNetworks[] = $addr;
-            }
-        }
-    }
-
-    $watchNetworks = array_values(array_unique($watchNetworks));
-    $watchHosts = array_values(array_unique($watchHosts));
+    $watchNetworks = $evaluation['watch_networks'];
+    $watchHosts = $evaluation['watch_hosts'];
+    $missingNetworks = $evaluation['missing_networks'];
+    $unreachableHosts = $evaluation['unreachable_hosts'];
+    $affectedIds = $evaluation['affected_ids'];
 
     if (empty($watchNetworks) && empty($watchHosts)) {
-        $message = 'Нет активных WireGuard клиентов или IP для проверки';
+        $message = empty($activePeers)
+            ? 'Нет активных WireGuard peers для проверки'
+            : 'В активных WireGuard peers не найдены Allowed IPs/Tunnel Address для проверки';
         out_msg($message, $silent);
         write_status([
             'ok' => true,
@@ -861,28 +972,10 @@ try {
             'watch_hosts' => [],
             'missing_networks' => [],
             'unreachable_hosts' => [],
+            'peers' => $evaluation['peer_results'],
             'source' => 'config.xml'
         ]);
         exit(0);
-    }
-
-    out_msg('Проверяю маршруты и ping', $silent);
-    $currentRoutes = collect_current_routes();
-
-    $missingNetworks = [];
-
-    foreach ($watchNetworks as $network) {
-        if (!route_destination_matches($network, $currentRoutes)) {
-            $missingNetworks[] = $network;
-        }
-    }
-
-    $unreachableHosts = [];
-
-    foreach ($watchHosts as $ip) {
-        if (!ping_host($ip)) {
-            $unreachableHosts[] = $ip;
-        }
     }
 
     if (!empty($missingNetworks) || !empty($unreachableHosts)) {
@@ -896,13 +989,29 @@ try {
             out_msg('Хосты не пингуются: ' . implode(', ', $unreachableHosts), $silent);
         }
 
-        $peerReset = reset_wireguard_peers_by_toggle($missingNetworks, $unreachableHosts);
+        $forceAll = empty($affectedIds) && (!empty($missingNetworks) || !empty($unreachableHosts));
+        $peerReset = reset_wireguard_peers_by_toggle($dom, $peers, $affectedIds, $forceAll);
         $restart = null;
+        $postEvaluation = null;
 
         if (!empty($peerReset['ok'])) {
-            out_msg('WireGuard peer toggle-reset выполнен', $silent);
-            $message = 'WireGuard деградация, выполнен toggle-reset peer';
-            $state = 'degraded_peer_toggle_reset';
+            out_msg('WireGuard peer disable/apply/enable/apply выполнен', $silent);
+
+            $domAfter = load_config_dom();
+            $peersAfter = load_wireguard_peers_dom($domAfter);
+            $postEvaluation = evaluate_wireguard_peers($peersAfter, $extraHosts);
+
+            if (empty($postEvaluation['missing_networks']) && empty($postEvaluation['unreachable_hosts'])) {
+                $message = 'WireGuard деградация устранена: peer disable/apply/enable/apply выполнен';
+                $state = 'recovered_peer_toggle_reset';
+                $ok = true;
+                $exitCode = 0;
+            } else {
+                $message = 'WireGuard peer reset выполнен, но проверка всё ещё видит деградацию';
+                $state = 'degraded_peer_toggle_reset_unverified';
+                $ok = false;
+                $exitCode = 1;
+            }
         } else {
             out_msg('Peer toggle-reset не выполнен: ' . ($peerReset['message'] ?? $peerReset['reason'] ?? 'unknown'), $silent);
             out_msg('Пробую обычный перезапуск WireGuard', $silent);
@@ -913,27 +1022,32 @@ try {
                 out_msg('WireGuard перезапущен: ' . $restart['command'], $silent);
                 $message = 'WireGuard деградация, toggle-reset не выполнен, выполнен обычный перезапуск';
                 $state = 'degraded_restart_fallback';
+                $ok = false;
+                $exitCode = 1;
             } else {
                 out_msg('Не удалось перезапустить WireGuard', $silent);
                 $message = 'WireGuard деградация, перезапуск не выполнен';
                 $state = 'degraded_restart_failed';
+                $ok = false;
+                $exitCode = 2;
             }
         }
 
         write_status([
-            'ok' => false,
+            'ok' => $ok,
             'state' => $state,
             'message' => $message,
-            'watch_networks' => $watchNetworks,
-            'watch_hosts' => $watchHosts,
-            'missing_networks' => $missingNetworks,
-            'unreachable_hosts' => $unreachableHosts,
+            'watch_networks' => $postEvaluation['watch_networks'] ?? $watchNetworks,
+            'watch_hosts' => $postEvaluation['watch_hosts'] ?? $watchHosts,
+            'missing_networks' => $postEvaluation['missing_networks'] ?? $missingNetworks,
+            'unreachable_hosts' => $postEvaluation['unreachable_hosts'] ?? $unreachableHosts,
+            'peers' => $postEvaluation['peer_results'] ?? $evaluation['peer_results'],
             'peer_reset' => $peerReset,
             'restart' => $restart,
             'source' => 'config.xml'
         ]);
 
-        exit((!empty($peerReset['ok']) || ($restart !== null && !empty($restart['ok']))) ? 1 : 2);
+        exit($exitCode);
     }
 
     out_msg('WireGuard OK', $silent);
@@ -945,6 +1059,7 @@ try {
         'watch_hosts' => $watchHosts,
         'missing_networks' => [],
         'unreachable_hosts' => [],
+        'peers' => $evaluation['peer_results'],
         'source' => 'config.xml'
     ]);
 
@@ -960,6 +1075,7 @@ try {
         'watch_hosts' => [],
         'missing_networks' => [],
         'unreachable_hosts' => [],
+        'peers' => [],
         'source' => 'config.xml'
     ]);
     exit(2);

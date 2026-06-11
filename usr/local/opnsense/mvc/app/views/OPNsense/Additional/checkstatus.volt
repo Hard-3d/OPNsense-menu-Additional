@@ -229,16 +229,19 @@ $(document).ready(function() {
         var stateText = "Неизвестно";
         var stateClass = "label-default";
 
-        if (wg.state === "ok" || wg.ok === true) {
-            stateText = "Работает";
+        if (wg.state === "ok" || wg.state === "recovered_peer_toggle_reset" || wg.ok === true) {
+            stateText = wg.state === "recovered_peer_toggle_reset" ? "Была деградация, peer восстановлен" : "Работает";
             stateClass = "label-success";
-        } else if (wg.state === "degraded_restarted") {
-            stateText = "Была деградация, выполнен перезапуск";
+        } else if (wg.state === "degraded_peer_toggle_reset_unverified") {
+            stateText = "Peer перезапущен, но деградация осталась";
+            stateClass = "label-warning";
+        } else if (wg.state === "degraded_peer_toggle_reset" || wg.state === "degraded_restarted" || wg.state === "degraded_restart_fallback") {
+            stateText = "Была деградация, выполнено восстановление";
             stateClass = "label-warning";
         } else if (wg.state === "no_targets") {
             stateText = "Нет объектов для проверки";
             stateClass = "label-info";
-        } else if (wg.state === "error" || wg.ok === false) {
+        } else if (wg.state === "degraded_restart_failed" || wg.state === "error" || wg.ok === false) {
             stateText = "Ошибка";
             stateClass = "label-danger";
         }
@@ -457,7 +460,7 @@ $(document).ready(function() {
     $("#btn_wg_run").click(function() {
         showConfirmModal(
             "Проверка WireGuard",
-            "Запустить проверку WireGuard сейчас?\nПри деградации WireGuard будет перезапущен.",
+            "Запустить проверку WireGuard сейчас?\nПри деградации будет выполнено: отключить peer → применить → включить peer → применить.",
             "Проверить",
             function() {
                 $("#btn_wg_run").prop("disabled", true);

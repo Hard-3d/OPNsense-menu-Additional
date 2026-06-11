@@ -686,7 +686,6 @@ $(document).ready(function() {
                 <span class="help-block">Второй резервный источник. Пустые поля пропускаются.</span>
             </div>
 
-            <p class="help-block">Файл .mmdb скачивается из первого доступного источника, затем конвертируется в /usr/local/share/GeoIP/alias/&lt;COUNTRY&gt;-IPv4/IPv6 и обновляет firewall aliases. Старые настройки base_url/mmdb_url автоматически мигрируют, пустые источники заполняются дефолтными URL #1-#3.</p>
 
             <button id="btn_geoip_save_url" type="button" class="btn btn-default">
                 <i class="fa fa-save"></i>
