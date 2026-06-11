@@ -622,13 +622,14 @@ $(document).ready(function() {
             <h2>Источник баз</h2>
 
             <div class="form-group">
-                <label for="geoip_base_url">Base URL</label>
+                <label for="geoip_base_url">Source URL / Base URL</label>
                 <input type="text"
                        id="geoip_base_url"
                        class="form-control"
                        style="width: 820px !important; max-width: 100% !important; display: block;"
                        spellcheck="false"
-                       placeholder="https://github.com/mamamialezatoz/geoip-database/releases/latest/download/">
+                       placeholder="https://github.com/runetfreedom/russia-blocked-geoip/archive/refs/heads/release.zip">
+                <span class="help-block">По умолчанию используется ZIP ветки release нового runetfreedom/russia-blocked-geoip. Старые mamamialezatoz и runetfreedom /releases/ URL автоматически мигрируются на рабочий источник.</span>
             </div>
 
             <button id="btn_geoip_save_url" type="button" class="btn btn-default">

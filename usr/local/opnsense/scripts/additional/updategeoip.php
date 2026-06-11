@@ -5,7 +5,9 @@ const SCRIPT_NAME = 'updategeoip-php';
 
 const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/geoip_update.json';
 
-const DEFAULT_BASE_URL = 'https://github.com/mamamialezatoz/geoip-database/releases/latest/download/';
+const DEFAULT_BASE_URL = 'https://github.com/runetfreedom/russia-blocked-geoip/archive/refs/heads/release.zip';
+const DEFAULT_TEXT_BASE_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/text/';
+const OLD_BASE_URL = 'https://github.com/mamamialezatoz/geoip-database/releases/latest/download/';
 
 const ALIAS_DIR = '/usr/local/share/GeoIP/alias';
 
@@ -14,6 +16,25 @@ const STATS_FILE = '/usr/local/share/GeoIP/alias.stats';
 const COUNTRY_LOCATIONS_FILE = 'GeoLite2-Country-Locations-en.csv';
 const COUNTRY_BLOCKS_IPV4_FILE = 'GeoLite2-Country-Blocks-IPv4.csv';
 const COUNTRY_BLOCKS_IPV6_FILE = 'GeoLite2-Country-Blocks-IPv6.csv';
+
+const COUNTRY_CODES = [
+    'AD','AE','AF','AG','AI','AL','AM','AO','AQ','AR','AS','AT','AU','AW','AX','AZ',
+    'BA','BB','BD','BE','BF','BG','BH','BI','BJ','BL','BM','BN','BO','BQ','BR','BS',
+    'BT','BV','BW','BY','BZ','CA','CC','CD','CF','CG','CH','CI','CK','CL','CM','CN',
+    'CO','CR','CU','CV','CW','CX','CY','CZ','DE','DJ','DK','DM','DO','DZ','EC','EE',
+    'EG','EH','ER','ES','ET','EU','FI','FJ','FK','FM','FO','FR','GA','GB','GD','GE',
+    'GF','GG','GH','GI','GL','GM','GN','GP','GQ','GR','GS','GT','GU','GW','GY','HK',
+    'HM','HN','HR','HT','HU','ID','IE','IL','IM','IN','IO','IQ','IR','IS','IT','JE',
+    'JM','JO','JP','KE','KG','KH','KI','KM','KN','KP','KR','KW','KY','KZ','LA','LB',
+    'LC','LI','LK','LR','LS','LT','LU','LV','LY','MA','MC','MD','ME','MF','MG','MH',
+    'MK','ML','MM','MN','MO','MP','MQ','MR','MS','MT','MU','MV','MW','MX','MY','MZ',
+    'NA','NC','NE','NF','NG','NI','NL','NO','NP','NR','NU','NZ','OM','PA','PE','PF',
+    'PG','PH','PK','PL','PM','PN','PR','PS','PT','PW','PY','QA','RE','RO','RS','RU',
+    'RW','SA','SB','SC','SD','SE','SG','SH','SI','SJ','SK','SL','SM','SN','SO','SR',
+    'SS','ST','SV','SX','SY','SZ','TC','TD','TF','TG','TH','TJ','TK','TL','TM','TN',
+    'TO','TR','TT','TV','TW','TZ','UA','UG','UM','US','UY','UZ','VA','VC','VE','VG',
+    'VI','VN','VU','WF','WS','XK','YE','YT','ZA','ZM','ZW'
+];
 
 function out(string $message, bool $silent): void
 {
@@ -52,38 +73,72 @@ function parseArgs(array $argv): array
     return $args;
 }
 
+function isLegacyGeoIpUrl(string $url): bool
+{
+    $lower = strtolower(trim($url));
+
+    return $lower === ''
+        || strpos($lower, 'mamamialezatoz/geoip-database') !== false
+        || strpos($lower, 'github.com/runetfreedom/russia-blocked-geoip/releases') !== false;
+}
+
 function normalizeBaseUrl(string $url): string
 {
     $url = trim($url);
 
-    if ($url === '') {
+    if (isLegacyGeoIpUrl($url)) {
         $url = DEFAULT_BASE_URL;
     }
 
     if (!preg_match('#^https?://#i', $url)) {
-        throw new RuntimeException('Base URL должен начинаться с http:// или https://');
+        throw new RuntimeException('Source URL должен начинаться с http:// или https://');
+    }
+
+    if (preg_match('~\.zip(?:$|[?&#])~i', $url)) {
+        return $url;
     }
 
     return rtrim($url, '/') . '/';
 }
 
+function saveConfigBaseUrl(string $baseUrl): void
+{
+    ensureDir(dirname(CONFIG_FILE), 0755);
+
+    $json = json_encode(['base_url' => $baseUrl], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    if ($json === false) {
+        throw new RuntimeException('Не удалось сформировать настройки GeoIP');
+    }
+
+    if (file_put_contents(CONFIG_FILE, $json . "\n", LOCK_EX) === false) {
+        throw new RuntimeException('Не удалось записать настройки GeoIP: ' . CONFIG_FILE);
+    }
+
+    chmod(CONFIG_FILE, 0644);
+}
+
 function loadConfigBaseUrl(): string
 {
-    if (!is_readable(CONFIG_FILE)) {
-        return DEFAULT_BASE_URL;
+    $baseUrl = DEFAULT_BASE_URL;
+
+    if (is_readable(CONFIG_FILE)) {
+        $raw = file_get_contents(CONFIG_FILE);
+        if ($raw !== false && trim($raw) !== '') {
+            $data = json_decode($raw, true);
+            if (is_array($data) && !empty($data['base_url'])) {
+                $baseUrl = (string)$data['base_url'];
+            }
+        }
     }
 
-    $raw = file_get_contents(CONFIG_FILE);
-    if ($raw === false || trim($raw) === '') {
-        return DEFAULT_BASE_URL;
+    $normalized = normalizeBaseUrl($baseUrl);
+
+    if ($normalized !== $baseUrl || !is_readable(CONFIG_FILE)) {
+        saveConfigBaseUrl($normalized);
     }
 
-    $data = json_decode($raw, true);
-    if (!is_array($data) || empty($data['base_url'])) {
-        return DEFAULT_BASE_URL;
-    }
-
-    return (string)$data['base_url'];
+    return $normalized;
 }
 
 function ensureDir(string $path, int $mode = 0755): void
@@ -110,10 +165,13 @@ function runCommand(string $command): array
     ];
 }
 
-function downloadFile(string $url, string $destination): void
+function downloadFile(string $url, string $destination, bool $required = true): bool
 {
     $fetch = '/usr/bin/fetch';
     $curl = '/usr/local/bin/curl';
+    $errors = [];
+
+    @unlink($destination);
 
     if (is_executable($fetch)) {
         $cmd = sprintf(
@@ -126,10 +184,11 @@ function downloadFile(string $url, string $destination): void
         $result = runCommand($cmd);
 
         if ($result['exit_code'] === 0 && file_exists($destination) && filesize($destination) > 0) {
-            return;
+            return true;
         }
 
-        throw new RuntimeException('Не удалось скачать файл через fetch: ' . $url . '; ' . $result['output']);
+        $errors[] = 'fetch: ' . $result['output'];
+        @unlink($destination);
     }
 
     if (is_executable($curl)) {
@@ -143,13 +202,22 @@ function downloadFile(string $url, string $destination): void
         $result = runCommand($cmd);
 
         if ($result['exit_code'] === 0 && file_exists($destination) && filesize($destination) > 0) {
-            return;
+            return true;
         }
 
-        throw new RuntimeException('Не удалось скачать файл через curl: ' . $url . '; ' . $result['output']);
+        $errors[] = 'curl: ' . $result['output'];
+        @unlink($destination);
     }
 
-    throw new RuntimeException('Не найден fetch или curl для загрузки файлов');
+    if (!$required) {
+        return false;
+    }
+
+    if (empty($errors)) {
+        throw new RuntimeException('Не найден fetch или curl для загрузки файлов');
+    }
+
+    throw new RuntimeException('Не удалось скачать файл: ' . $url . '; ' . implode('; ', $errors));
 }
 
 function openCsv(string $file)
@@ -252,6 +320,13 @@ function getAliasHandle(array &$handles, string $tmpAliasDir, string $aliasName)
     return $handles[$aliasName];
 }
 
+function appendAliasNetwork(array &$handles, string $tmpAliasDir, string $countryCode, string $proto, string $network): void
+{
+    $aliasName = strtoupper($countryCode) . '-' . $proto;
+    $aliasHandle = getAliasHandle($handles, $tmpAliasDir, $aliasName);
+    fwrite($aliasHandle, $network . "\n");
+}
+
 function parseBlocksToAliasFiles(
     string $file,
     array $geonameToCountry,
@@ -287,10 +362,7 @@ function parseBlocksToAliasFiles(
             continue;
         }
 
-        $aliasName = $countryCode . '-' . $ipVersion;
-        $aliasHandle = getAliasHandle($handles, $tmpAliasDir, $aliasName);
-
-        fwrite($aliasHandle, $network . "\n");
+        appendAliasNetwork($handles, $tmpAliasDir, $countryCode, $ipVersion, $network);
         $count++;
     }
 
@@ -345,6 +417,7 @@ function installAliasFiles(string $tmpAliasDir, string $aliasDir, bool $cleanOld
             throw new RuntimeException('Не удалось прочитать временный alias-файл: ' . $src);
         }
 
+        $lines = array_values(array_unique(array_map('trim', $lines)));
         sort($lines, SORT_STRING);
         $content = implode("\n", $lines) . "\n";
 
@@ -364,7 +437,7 @@ function installAliasFiles(string $tmpAliasDir, string $aliasDir, bool $cleanOld
     ];
 }
 
-function writeStats(int $addressCount, int $fileCount, string $baseUrl): void
+function writeStats(int $addressCount, int $fileCount, string $baseUrl, array $sourceInfo): void
 {
     ensureDir(dirname(STATS_FILE), 0755);
 
@@ -372,12 +445,10 @@ function writeStats(int $addressCount, int $fileCount, string $baseUrl): void
         'address_count' => $addressCount,
         'file_count' => $fileCount,
         'timestamp' => date('c'),
-        'locations_filename' => COUNTRY_LOCATIONS_FILE,
-        'address_sources' => [
-            'IPv4' => COUNTRY_BLOCKS_IPV4_FILE,
-            'IPv6' => COUNTRY_BLOCKS_IPV6_FILE,
-        ],
+        'locations_filename' => $sourceInfo['locations_filename'] ?? '',
+        'address_sources' => $sourceInfo['address_sources'] ?? [],
         'source_base_url' => $baseUrl,
+        'source_mode' => $sourceInfo['source_mode'] ?? '',
     ];
 
     $json = json_encode($stats, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -433,28 +504,251 @@ function removeTree(string $dir): void
     @rmdir($dir);
 }
 
-$args = parseArgs($argv);
-$silent = $args['silent'];
-$handles = [];
-$workDir = null;
+function isZipSource(string $url): bool
+{
+    return preg_match('~\.zip(?:$|[?&#])~i', $url) === 1;
+}
 
-try {
-    $baseUrl = $args['base_url'] !== null ? $args['base_url'] : loadConfigBaseUrl();
-    $baseUrl = normalizeBaseUrl($baseUrl);
+function isRunetFreedomTextSource(string $url): bool
+{
+    $lower = strtolower($url);
 
-    $workDir = sys_get_temp_dir() . '/updategeoip_php_' . getmypid();
-    $tmpCsvDir = $workDir . '/csv';
-    $tmpAliasDir = $workDir . '/alias';
+    return strpos($lower, 'runetfreedom/russia-blocked-geoip') !== false
+        && strpos($lower, '/text/') !== false;
+}
 
-    removeTree($workDir);
-    ensureDir($tmpCsvDir, 0755);
-    ensureDir($tmpAliasDir, 0755);
+function isRunetFreedomGenericSource(string $url): bool
+{
+    return strpos(strtolower($url), 'runetfreedom/russia-blocked-geoip') !== false;
+}
 
+function extractZipFile(string $zipFile, string $extractDir): void
+{
+    ensureDir($extractDir, 0755);
+
+    if (class_exists('ZipArchive')) {
+        $zip = new ZipArchive();
+        $opened = $zip->open($zipFile);
+
+        if ($opened !== true) {
+            throw new RuntimeException('Не удалось открыть ZIP-архив: ' . $zipFile);
+        }
+
+        if (!$zip->extractTo($extractDir)) {
+            $zip->close();
+            throw new RuntimeException('Не удалось распаковать ZIP-архив: ' . $zipFile);
+        }
+
+        $zip->close();
+        return;
+    }
+
+    $unzip = '/usr/local/bin/unzip';
+    if (!is_executable($unzip)) {
+        $unzip = '/usr/bin/unzip';
+    }
+
+    if (!is_executable($unzip)) {
+        throw new RuntimeException('Не найден unzip и недоступен PHP ZipArchive');
+    }
+
+    $cmd = sprintf(
+        '%s -q -o %s -d %s',
+        escapeshellcmd($unzip),
+        escapeshellarg($zipFile),
+        escapeshellarg($extractDir)
+    );
+
+    $result = runCommand($cmd);
+
+    if ($result['exit_code'] !== 0) {
+        throw new RuntimeException('Не удалось распаковать ZIP: ' . $result['output']);
+    }
+}
+
+function parseNetworkLine(string $line): ?array
+{
+    $line = preg_replace('/^\xEF\xBB\xBF/', '', $line);
+    $line = trim($line);
+
+    if ($line === '' || strpos($line, '#') === 0 || strpos($line, '//') === 0) {
+        return null;
+    }
+
+    $line = preg_split('/\s+/', $line)[0];
+    $line = trim($line);
+
+    if ($line === '') {
+        return null;
+    }
+
+    $parts = explode('/', $line, 2);
+    $ip = $parts[0];
+    $prefix = $parts[1] ?? null;
+
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
+        if ($prefix !== null && (!ctype_digit($prefix) || (int)$prefix < 0 || (int)$prefix > 32)) {
+            return null;
+        }
+
+        return [
+            'network' => $prefix === null ? $ip : $ip . '/' . (int)$prefix,
+            'proto' => 'IPv4',
+        ];
+    }
+
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
+        if ($prefix !== null && (!ctype_digit($prefix) || (int)$prefix < 0 || (int)$prefix > 128)) {
+            return null;
+        }
+
+        return [
+            'network' => $prefix === null ? $ip : $ip . '/' . (int)$prefix,
+            'proto' => 'IPv6',
+        ];
+    }
+
+    return null;
+}
+
+function parseTextCountryFile(string $file, string $countryCode, string $tmpAliasDir, array &$handles): array
+{
+    $handle = fopen($file, 'rb');
+
+    if ($handle === false) {
+        throw new RuntimeException('Не удалось открыть текстовый список: ' . $file);
+    }
+
+    $counts = [
+        'IPv4' => 0,
+        'IPv6' => 0,
+    ];
+
+    while (($line = fgets($handle)) !== false) {
+        $parsed = parseNetworkLine($line);
+
+        if ($parsed === null) {
+            continue;
+        }
+
+        appendAliasNetwork($handles, $tmpAliasDir, $countryCode, $parsed['proto'], $parsed['network']);
+        $counts[$parsed['proto']]++;
+    }
+
+    fclose($handle);
+
+    return $counts;
+}
+
+function processRunetFreedomZip(string $zipFile, string $extractDir, string $tmpAliasDir, array &$handles): array
+{
+    extractZipFile($zipFile, $extractDir);
+
+    $countryFiles = 0;
+    $parsedIPv4 = 0;
+    $parsedIPv6 = 0;
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($extractDir, FilesystemIterator::SKIP_DOTS)
+    );
+
+    foreach ($iterator as $fileInfo) {
+        if (!$fileInfo->isFile()) {
+            continue;
+        }
+
+        $path = $fileInfo->getPathname();
+        $parent = basename(dirname($path));
+        $filename = basename($path);
+
+        if (strtolower($parent) !== 'text') {
+            continue;
+        }
+
+        if (!preg_match('/^([a-z]{2})\.txt$/i', $filename, $matches)) {
+            continue;
+        }
+
+        $countryCode = strtoupper($matches[1]);
+
+        if (!isCountryCode($countryCode)) {
+            continue;
+        }
+
+        $counts = parseTextCountryFile($path, $countryCode, $tmpAliasDir, $handles);
+
+        if ($counts['IPv4'] > 0 || $counts['IPv6'] > 0) {
+            $countryFiles++;
+            $parsedIPv4 += $counts['IPv4'];
+            $parsedIPv6 += $counts['IPv6'];
+        }
+    }
+
+    if ($countryFiles === 0) {
+        throw new RuntimeException('В ZIP не найдены country-файлы text/*.txt с IP/CIDR сетями');
+    }
+
+    return [
+        'source_mode' => 'runetfreedom_zip_text',
+        'locations_filename' => 'text/*.txt',
+        'address_sources' => [
+            'IPv4' => 'text/*.txt',
+            'IPv6' => 'text/*.txt',
+        ],
+        'parsed_ipv4' => $parsedIPv4,
+        'parsed_ipv6' => $parsedIPv6,
+        'country_files' => $countryFiles,
+    ];
+}
+
+function processRunetFreedomTextBase(string $baseUrl, string $tmpDownloadDir, string $tmpAliasDir, array &$handles, bool $silent): array
+{
+    $downloadedFiles = 0;
+    $parsedIPv4 = 0;
+    $parsedIPv6 = 0;
+
+    foreach (COUNTRY_CODES as $countryCode) {
+        $filename = strtolower($countryCode) . '.txt';
+        $url = rtrim($baseUrl, '/') . '/' . $filename;
+        $destination = $tmpDownloadDir . '/' . $filename;
+
+        out('Скачиваю ' . $filename, $silent);
+
+        if (!downloadFile($url, $destination, false)) {
+            continue;
+        }
+
+        $counts = parseTextCountryFile($destination, $countryCode, $tmpAliasDir, $handles);
+
+        if ($counts['IPv4'] > 0 || $counts['IPv6'] > 0) {
+            $downloadedFiles++;
+            $parsedIPv4 += $counts['IPv4'];
+            $parsedIPv6 += $counts['IPv6'];
+        }
+    }
+
+    if ($downloadedFiles === 0) {
+        throw new RuntimeException('Не удалось скачать ни один country-файл из text source: ' . $baseUrl);
+    }
+
+    return [
+        'source_mode' => 'runetfreedom_text_base',
+        'locations_filename' => 'text/*.txt',
+        'address_sources' => [
+            'IPv4' => 'text/*.txt',
+            'IPv6' => 'text/*.txt',
+        ],
+        'parsed_ipv4' => $parsedIPv4,
+        'parsed_ipv6' => $parsedIPv6,
+        'country_files' => $downloadedFiles,
+    ];
+}
+
+function processLegacyCsvSource(string $baseUrl, string $tmpCsvDir, string $tmpAliasDir, array &$handles, bool $silent): array
+{
     $locationsPath = $tmpCsvDir . '/' . COUNTRY_LOCATIONS_FILE;
     $ipv4Path = $tmpCsvDir . '/' . COUNTRY_BLOCKS_IPV4_FILE;
     $ipv6Path = $tmpCsvDir . '/' . COUNTRY_BLOCKS_IPV6_FILE;
-
-    out('Источник: ' . $baseUrl, $silent);
 
     out('Скачиваю ' . COUNTRY_LOCATIONS_FILE, $silent);
     downloadFile($baseUrl . COUNTRY_LOCATIONS_FILE, $locationsPath);
@@ -478,12 +772,68 @@ try {
     out('Разбираю IPv6 blocks', $silent);
     $parsedIPv6 = parseBlocksToAliasFiles($ipv6Path, $geonameToCountry, 'IPv6', $tmpAliasDir, $handles);
 
+    return [
+        'source_mode' => 'legacy_maxmind_csv',
+        'locations_filename' => COUNTRY_LOCATIONS_FILE,
+        'address_sources' => [
+            'IPv4' => COUNTRY_BLOCKS_IPV4_FILE,
+            'IPv6' => COUNTRY_BLOCKS_IPV6_FILE,
+        ],
+        'parsed_ipv4' => $parsedIPv4,
+        'parsed_ipv6' => $parsedIPv6,
+        'country_files' => 0,
+    ];
+}
+
+$args = parseArgs($argv);
+$silent = $args['silent'];
+$handles = [];
+$workDir = null;
+
+try {
+    $baseUrl = $args['base_url'] !== null ? $args['base_url'] : loadConfigBaseUrl();
+    $baseUrl = normalizeBaseUrl($baseUrl);
+
+    $workDir = sys_get_temp_dir() . '/updategeoip_php_' . getmypid();
+    $tmpCsvDir = $workDir . '/csv';
+    $tmpAliasDir = $workDir . '/alias';
+    $tmpZipDir = $workDir . '/zip';
+    $tmpExtractDir = $workDir . '/extract';
+    $tmpTextDir = $workDir . '/text';
+
+    removeTree($workDir);
+    ensureDir($tmpCsvDir, 0755);
+    ensureDir($tmpAliasDir, 0755);
+    ensureDir($tmpZipDir, 0755);
+    ensureDir($tmpTextDir, 0755);
+
+    out('Источник: ' . $baseUrl, $silent);
+
+    if (isZipSource($baseUrl)) {
+        $zipFile = $tmpZipDir . '/source.zip';
+        out('Скачиваю ZIP с runetfreedom release branch', $silent);
+        downloadFile($baseUrl, $zipFile);
+        out('Разбираю text/*.txt из ZIP', $silent);
+        $sourceInfo = processRunetFreedomZip($zipFile, $tmpExtractDir, $tmpAliasDir, $handles);
+    } elseif (isRunetFreedomTextSource($baseUrl)) {
+        out('Разбираю runetfreedom text base', $silent);
+        $sourceInfo = processRunetFreedomTextBase($baseUrl, $tmpTextDir, $tmpAliasDir, $handles, $silent);
+    } elseif (isRunetFreedomGenericSource($baseUrl)) {
+        out('Для runetfreedom используется release.zip: ' . DEFAULT_BASE_URL, $silent);
+        $baseUrl = DEFAULT_BASE_URL;
+        $zipFile = $tmpZipDir . '/source.zip';
+        downloadFile($baseUrl, $zipFile);
+        $sourceInfo = processRunetFreedomZip($zipFile, $tmpExtractDir, $tmpAliasDir, $handles);
+    } else {
+        $sourceInfo = processLegacyCsvSource($baseUrl, $tmpCsvDir, $tmpAliasDir, $handles, $silent);
+    }
+
     closeAliasHandles($handles);
 
     out('Записываю alias-файлы в ' . ALIAS_DIR, $silent);
     $written = installAliasFiles($tmpAliasDir, ALIAS_DIR, $args['clean_old']);
 
-    writeStats($written['address_count'], $written['file_count'], $baseUrl);
+    writeStats($written['address_count'], $written['file_count'], $baseUrl, $sourceInfo);
 
     if ($args['refresh_aliases']) {
         refreshAliases($silent);
@@ -491,10 +841,11 @@ try {
 
     removeTree($workDir);
 
-    out('IPv4 записей разобрано: ' . $parsedIPv4, $silent);
-    out('IPv6 записей разобрано: ' . $parsedIPv6, $silent);
+    out('IPv4 записей разобрано: ' . $sourceInfo['parsed_ipv4'], $silent);
+    out('IPv6 записей разобрано: ' . $sourceInfo['parsed_ipv6'], $silent);
     out('Total number of ranges: ' . $written['address_count'], $silent);
     out('Alias files: ' . $written['file_count'], $silent);
+    out('Source mode: ' . $sourceInfo['source_mode'], $silent);
     out('Готово', $silent);
 
     exit(0);

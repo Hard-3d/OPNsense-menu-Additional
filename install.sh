@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Installing OPNsense Additional Menu v0.1.40..."
+echo "Installing OPNsense Additional Menu v0.1.41..."
 
 # ownership
 chown -R root:wheel /usr/local/opnsense/mvc/app/models/OPNsense/Additional 2>/dev/null || true
@@ -72,6 +72,16 @@ php -l /usr/local/opnsense/scripts/additional/additional-updater.php
 php -l /usr/local/opnsense/scripts/additional/additional-scheduler.php
 php -l /usr/local/opnsense/scripts/additional/wireguard-peers-manager.php
 php -l /usr/local/opnsense/scripts/additional/udp2raw-manager.php
+
+# migrate GeoIP source settings away from the discontinued mamamialezatoz endpoint
+GEOIP_CONFIG="/usr/local/opnsense/scripts/additional/geoip_update.json"
+GEOIP_DEFAULT="https://github.com/runetfreedom/russia-blocked-geoip/archive/refs/heads/release.zip"
+if [ ! -f "${GEOIP_CONFIG}" ] || grep -Eq 'mamamialezatoz|geoip-database|github.com/runetfreedom/russia-blocked-geoip/releases' "${GEOIP_CONFIG}" 2>/dev/null; then
+    mkdir -p "$(dirname "${GEOIP_CONFIG}")"
+    printf '{\n    "base_url": "%s"\n}\n' "${GEOIP_DEFAULT}" > "${GEOIP_CONFIG}"
+    chown root:wheel "${GEOIP_CONFIG}" 2>/dev/null || true
+    chmod 644 "${GEOIP_CONFIG}" 2>/dev/null || true
+fi
 
 # ensure scheduler config contains all current tasks
 /usr/local/opnsense/scripts/additional/additional-scheduler.php --status --json >/dev/null 2>&1 || true

@@ -9,22 +9,34 @@ class GeoipController extends ApiControllerBase
 {
     private const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/geoip_update.json';
 
-    private const DEFAULT_BASE_URL = 'https://github.com/mamamialezatoz/geoip-database/releases/latest/download/';
-
+    private const DEFAULT_BASE_URL = 'https://github.com/runetfreedom/russia-blocked-geoip/archive/refs/heads/release.zip';
     private const UPDATE_SCRIPT = '/usr/local/opnsense/scripts/additional/updategeoip.php';
 
     private const STATS_FILE = '/usr/local/share/GeoIP/alias.stats';
+
+    private function isLegacyGeoIpUrl(string $url): bool
+    {
+        $lower = strtolower(trim($url));
+
+        return $lower === ''
+            || strpos($lower, 'mamamialezatoz/geoip-database') !== false
+            || strpos($lower, 'github.com/runetfreedom/russia-blocked-geoip/releases') !== false;
+    }
 
     private function normalizeBaseUrl(string $url): string
     {
         $url = trim($url);
 
-        if ($url === '') {
+        if ($this->isLegacyGeoIpUrl($url)) {
             $url = self::DEFAULT_BASE_URL;
         }
 
         if (!preg_match('#^https?://#i', $url)) {
             throw new \RuntimeException('URL должен начинаться с http:// или https://');
+        }
+
+        if (preg_match('~\.zip(?:$|[?&#])~i', $url)) {
+            return $url;
         }
 
         return rtrim($url, '/') . '/';
@@ -41,23 +53,35 @@ class GeoipController extends ApiControllerBase
 
     private function loadConfig(): array
     {
-        if (!is_readable(self::CONFIG_FILE)) {
-            return [
-                'base_url' => self::DEFAULT_BASE_URL
-            ];
+        $data = [
+            'base_url' => self::DEFAULT_BASE_URL
+        ];
+
+        if (is_readable(self::CONFIG_FILE)) {
+            $raw = file_get_contents(self::CONFIG_FILE);
+            $decoded = json_decode((string)$raw, true);
+
+            if (is_array($decoded)) {
+                $data = array_merge($data, $decoded);
+            }
         }
 
-        $raw = file_get_contents(self::CONFIG_FILE);
-        $data = json_decode((string)$raw, true);
-
-        if (!is_array($data)) {
-            return [
-                'base_url' => self::DEFAULT_BASE_URL
-            ];
+        try {
+            $normalized = $this->normalizeBaseUrl((string)($data['base_url'] ?? ''));
+        } catch (\Throwable $e) {
+            $normalized = self::DEFAULT_BASE_URL;
         }
 
-        if (empty($data['base_url'])) {
-            $data['base_url'] = self::DEFAULT_BASE_URL;
+        if (($data['base_url'] ?? '') !== $normalized || !is_readable(self::CONFIG_FILE)) {
+            $data['base_url'] = $normalized;
+
+            try {
+                $this->saveConfig($data);
+            } catch (\Throwable $e) {
+                // Settings can still be returned even if automatic migration cannot write the file.
+            }
+        } else {
+            $data['base_url'] = $normalized;
         }
 
         return $data;
