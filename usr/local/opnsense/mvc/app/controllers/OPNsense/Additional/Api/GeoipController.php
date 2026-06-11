@@ -4,6 +4,7 @@ namespace OPNsense\Additional\Api;
 
 use OPNsense\Base\ApiControllerBase;
 use OPNsense\Core\Backend;
+use OPNsense\Core\Config;
 
 class GeoipController extends ApiControllerBase
 {
@@ -101,6 +102,44 @@ class GeoipController extends ApiControllerBase
         }
 
         return $legacy;
+    }
+
+
+    private function firstNonEmptyUrl(array $urls): string
+    {
+        foreach ($urls as $url) {
+            if (trim((string)$url) !== '') {
+                return trim((string)$url);
+            }
+        }
+
+        return '';
+    }
+
+    private function ensureXmlChild($node, string $name)
+    {
+        if (!isset($node->$name)) {
+            return $node->addChild($name);
+        }
+
+        return $node->$name;
+    }
+
+    private function setCoreGeoIpUrl(string $url): void
+    {
+        $url = trim($url);
+        if ($url === '') {
+            return;
+        }
+
+        $config = Config::getInstance();
+        $cnf = $config->object();
+        $opnsense = $this->ensureXmlChild($cnf, 'OPNsense');
+        $firewall = $this->ensureXmlChild($opnsense, 'Firewall');
+        $alias = $this->ensureXmlChild($firewall, 'Alias');
+        $geoip = $this->ensureXmlChild($alias, 'geoip');
+        $geoip->url = $url;
+        $config->save();
     }
 
     private function ensureConfigDir(): void
@@ -315,6 +354,12 @@ class GeoipController extends ApiControllerBase
                 'mmdb_urls' => $urls
             ]);
 
+            try {
+                $this->setCoreGeoIpUrl($this->firstNonEmptyUrl($urls));
+            } catch (\Throwable $e) {
+                // The Additional updater can still work when the native GeoIP URL cannot be written.
+            }
+
             return [
                 'status' => 'ok',
                 'message' => 'MMDB URL settings saved',
@@ -353,6 +398,12 @@ class GeoipController extends ApiControllerBase
                 'mmdb_urls' => $urls
             ]);
 
+            try {
+                $this->setCoreGeoIpUrl($this->firstNonEmptyUrl($urls));
+            } catch (\Throwable $e) {
+                // Keep updating through the Additional converter even if native GeoIP settings cannot be saved.
+            }
+
             if (!is_executable(self::UPDATE_SCRIPT)) {
                 return [
                     'status' => 'error',
@@ -381,7 +432,7 @@ class GeoipController extends ApiControllerBase
 
             return [
                 'status' => 'ok',
-                'message' => 'GeoIP MMDB обновлён',
+                'message' => 'GeoIP MMDB обновлён, alias ranges пересобраны',
                 'output' => $result['output'],
                 'stats' => $this->readCoreGeoIpStats(),
                 'stats_source' => 'filter geoip stats / alias.stats'

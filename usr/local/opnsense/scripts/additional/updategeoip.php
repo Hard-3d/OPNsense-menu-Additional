@@ -11,7 +11,10 @@ const DEFAULT_MMDB_URLS = [
 ];
 
 const MMDB_FILE = '/usr/local/share/GeoIP/runetfreedom-Country.mmdb';
+const ALIAS_DIR = '/usr/local/share/GeoIP/alias';
 const STATS_FILE = '/usr/local/share/GeoIP/alias.stats';
+const CONVERTER_SCRIPT = '/usr/local/opnsense/scripts/additional/mmdb_to_geoip_alias.py';
+const FILTER_GEOIP_CONF = '/usr/local/etc/filter_geoip.conf';
 
 function out(string $message, bool $silent): void
 {
@@ -31,11 +34,14 @@ function parseArgs(array $argv): array
     $args = [
         'mmdb_urls' => [],
         'silent' => false,
+        'refresh' => true,
     ];
 
     foreach ($argv as $arg) {
         if ($arg === '-s' || $arg === '--silent') {
             $args['silent'] = true;
+        } elseif ($arg === '--no-refresh') {
+            $args['refresh'] = false;
         } elseif (strpos($arg, '--mmdb-url=') === 0) {
             $args['mmdb_urls'][] = substr($arg, strlen('--mmdb-url='));
         } elseif (strpos($arg, '--base-url=') === 0) {
@@ -276,9 +282,87 @@ function removeTree(string $dir): void
     @rmdir($dir);
 }
 
-function downloadMmdbWithFallback(array $urls, string $tmpDir, bool $silent): array
+function writeFilterGeoipConf(string $url): void
+{
+    ensureDir(dirname(FILTER_GEOIP_CONF), 0755);
+    $content = "[settings]\nurl = " . $url . "\n";
+    if (file_put_contents(FILTER_GEOIP_CONF, $content, LOCK_EX) === false) {
+        throw new RuntimeException('Could not write ' . FILTER_GEOIP_CONF);
+    }
+    chmod(FILTER_GEOIP_CONF, 0644);
+}
+
+function convertMmdbToAliases(string $url, int $sourceIndex, bool $silent): array
+{
+    if (!is_executable(CONVERTER_SCRIPT)) {
+        throw new RuntimeException('MMDB converter is not executable: ' . CONVERTER_SCRIPT);
+    }
+
+    ensureDir(dirname(STATS_FILE), 0755);
+    ensureDir(ALIAS_DIR, 0755);
+
+    $python = is_executable('/usr/local/bin/python3') ? '/usr/local/bin/python3' : '/usr/bin/env python3';
+    $cmd = sprintf(
+        '%s %s --input %s --alias-dir %s --stats-file %s --source-url %s --source-index %s',
+        $python,
+        escapeshellarg(CONVERTER_SCRIPT),
+        escapeshellarg(MMDB_FILE),
+        escapeshellarg(ALIAS_DIR),
+        escapeshellarg(STATS_FILE),
+        escapeshellarg($url),
+        escapeshellarg((string)$sourceIndex)
+    );
+
+    $result = runCommand($cmd);
+    if ($result['exit_code'] !== 0) {
+        throw new RuntimeException('MMDB conversion failed: ' . $result['output']);
+    }
+
+    $stats = json_decode($result['output'], true);
+    if (!is_array($stats)) {
+        throw new RuntimeException('MMDB converter returned invalid JSON: ' . $result['output']);
+    }
+
+    out('Alias files: ' . ($stats['file_count'] ?? 0) . ', ranges: ' . ($stats['address_count'] ?? 0), $silent);
+    return $stats;
+}
+
+function refreshFirewallAliases(bool $silent): array
+{
+    $commands = [];
+
+    if (is_executable('/usr/local/sbin/configctl')) {
+        $commands[] = '/usr/local/sbin/configctl filter refresh_aliases';
+    }
+
+    if (is_executable('/usr/local/opnsense/scripts/filter/update_tables.py')) {
+        $python = is_executable('/usr/local/bin/python3') ? '/usr/local/bin/python3' : '/usr/bin/env python3';
+        $commands[] = $python . ' /usr/local/opnsense/scripts/filter/update_tables.py';
+    }
+
+    foreach ($commands as $command) {
+        out('Refreshing firewall aliases: ' . $command, $silent);
+        $result = runCommand($command);
+        if ($result['exit_code'] === 0) {
+            return [
+                'status' => 'ok',
+                'command' => $command,
+                'output' => $result['output'],
+            ];
+        }
+        out('WARNING: refresh command failed: ' . $result['output'], $silent);
+    }
+
+    return [
+        'status' => 'skipped',
+        'message' => 'No firewall alias refresh command found',
+    ];
+}
+
+function updateMmdbWithFallback(array $urls, string $tmpDir, bool $silent, bool $refresh): array
 {
     ensureDir(dirname(MMDB_FILE), 0755);
+    ensureDir(ALIAS_DIR, 0755);
     ensureDir($tmpDir, 0755);
 
     $urls = normalizeMmdbUrls($urls);
@@ -311,9 +395,13 @@ function downloadMmdbWithFallback(array $urls, string $tmpDir, bool $silent): ar
             }
 
             chmod(MMDB_FILE, 0644);
+            writeFilterGeoipConf($url);
+
+            $stats = convertMmdbToAliases($url, $index + 1, $silent);
+            $refreshInfo = $refresh ? refreshFirewallAliases($silent) : ['status' => 'skipped', 'message' => '--no-refresh'];
 
             $attempt['status'] = 'ok';
-            $attempt['message'] = 'downloaded';
+            $attempt['message'] = 'downloaded and converted';
             $attempt['size_bytes'] = (int)$size;
             $attempts[] = $attempt;
 
@@ -324,6 +412,8 @@ function downloadMmdbWithFallback(array $urls, string $tmpDir, bool $silent): ar
                 'size_bytes' => (int)$size,
                 'timestamp' => date('c'),
                 'attempts' => $attempts,
+                'stats' => $stats,
+                'refresh' => $refreshInfo,
             ];
         } catch (Throwable $e) {
             @unlink($tmpFile);
@@ -333,37 +423,7 @@ function downloadMmdbWithFallback(array $urls, string $tmpDir, bool $silent): ar
         }
     }
 
-    throw new RuntimeException('Все MMDB источники недоступны: ' . json_encode($attempts, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-}
-
-function writeStats(array $mmdbInfo): void
-{
-    ensureDir(dirname(STATS_FILE), 0755);
-
-    $stats = [
-        'address_count' => 0,
-        'file_count' => 0,
-        'timestamp' => date('c'),
-        'locations_filename' => basename(MMDB_FILE),
-        'address_sources' => [
-            'MMDB' => $mmdbInfo['url'] ?? '',
-        ],
-        'source_base_url' => $mmdbInfo['url'] ?? '',
-        'source_mode' => 'mmdb_direct_fallback',
-        'mmdb' => $mmdbInfo,
-    ];
-
-    $json = json_encode($stats, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-
-    if ($json === false) {
-        throw new RuntimeException('Не удалось сформировать alias.stats');
-    }
-
-    if (file_put_contents(STATS_FILE, $json, LOCK_EX) === false) {
-        throw new RuntimeException('Не удалось записать ' . STATS_FILE);
-    }
-
-    chmod(STATS_FILE, 0644);
+    throw new RuntimeException('Все MMDB источники недоступны или не конвертируются в GeoIP aliases: ' . json_encode($attempts, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 }
 
 $args = parseArgs($argv);
@@ -383,13 +443,12 @@ try {
     removeTree($workDir);
     ensureDir($workDir, 0755);
 
-    $mmdbInfo = downloadMmdbWithFallback($urls, $workDir, $silent);
-    writeStats($mmdbInfo);
+    $info = updateMmdbWithFallback($urls, $workDir, $silent, $args['refresh']);
 
     removeTree($workDir);
 
-    out('MMDB file: ' . $mmdbInfo['file'] . ' (' . $mmdbInfo['size_bytes'] . ' bytes)', $silent);
-    out('Source #' . $mmdbInfo['source_index'] . ': ' . $mmdbInfo['url'], $silent);
+    out('MMDB file: ' . $info['file'] . ' (' . $info['size_bytes'] . ' bytes)', $silent);
+    out('Source #' . $info['source_index'] . ': ' . $info['url'], $silent);
     out('Done', $silent);
 
     exit(0);

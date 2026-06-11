@@ -618,12 +618,12 @@ $(document).ready(function() {
         var mmdbUrls = readMmdbUrls();
 
         showConfirmModal(
-            "Обновление GeoIP MMDB",
-            "Скачать GeoIP MMDB?\nЕсли первый источник недоступен, будет использован следующий.",
+            "Обновление GeoIP",
+            "Скачать MMDB и пересобрать GeoIP alias ranges?\nЕсли первый источник недоступен, будет использован следующий.",
             "Обновить",
             function() {
                 $("#btn_geoip_update").prop("disabled", true);
-                showMessage("info", "Идёт обновление GeoIP MMDB. Дождитесь завершения...");
+                showMessage("info", "Идёт загрузка MMDB, конвертация в GeoIP alias ranges и обновление firewall aliases. Дождитесь завершения...");
 
                 ajaxCall("/api/additional/geoip/update", {
                     mmdb_urls: mmdbUrls
@@ -636,7 +636,7 @@ $(document).ready(function() {
                         loadAdditionalStatus();
                         loadCronStatus();
                     } else {
-                        showMessage("danger", data.message || "Ошибка обновления GeoIP MMDB");
+                        showMessage("danger", data.message || "Ошибка обновления GeoIP / alias ranges");
                     }
                 });
             }
@@ -651,7 +651,7 @@ $(document).ready(function() {
         <div id="geoip_message" class="alert" style="display:none;"></div>
 
         <div class="geoip-section geoip-source-box">
-            <h2>Источники MMDB</h2>
+            <h2>Источники MMDB для GeoIP aliases</h2>
 
             <div class="form-group">
                 <label for="geoip_mmdb_url1">MMDB URL #1</label>
@@ -686,7 +686,7 @@ $(document).ready(function() {
                 <span class="help-block">Второй резервный источник. Пустые поля пропускаются.</span>
             </div>
 
-            <p class="help-block">Файл сохраняется как /usr/local/share/GeoIP/runetfreedom-Country.mmdb. Старые настройки base_url/mmdb_url автоматически мигрируют, пустые источники заполняются дефолтными URL #1-#3.</p>
+            <p class="help-block">Файл .mmdb скачивается из первого доступного источника, затем конвертируется в /usr/local/share/GeoIP/alias/&lt;COUNTRY&gt;-IPv4/IPv6 и обновляет firewall aliases. Старые настройки base_url/mmdb_url автоматически мигрируют, пустые источники заполняются дефолтными URL #1-#3.</p>
 
             <button id="btn_geoip_save_url" type="button" class="btn btn-default">
                 <i class="fa fa-save"></i>
@@ -716,7 +716,7 @@ $(document).ready(function() {
                     <td id="geoip_file_count">0</td>
                 </tr>
                 <tr>
-                    <th>MMDB file</th>
+                    <th>MMDB file / source</th>
                     <td id="geoip_mmdb_file">-</td>
                 </tr>
                 <tr>

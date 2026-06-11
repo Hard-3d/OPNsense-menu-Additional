@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Installing OPNsense Additional Menu v0.1.45..."
+echo "Installing OPNsense Additional Menu v0.1.46..."
 
 # ownership
 chown -R root:wheel /usr/local/opnsense/mvc/app/models/OPNsense/Additional 2>/dev/null || true
@@ -30,6 +30,7 @@ find /usr/local/opnsense/mvc/app/views/OPNsense/Additional -type f -exec chmod 6
 find /usr/local/opnsense/scripts/additional -type f -exec chmod 644 {} \; 2>/dev/null || true
 
 chmod 755 /usr/local/opnsense/scripts/additional/updategeoip.php 2>/dev/null || true
+chmod 755 /usr/local/opnsense/scripts/additional/mmdb_to_geoip_alias.py 2>/dev/null || true
 chmod 755 /usr/local/opnsense/scripts/additional/check-wg-status.php 2>/dev/null || true
 chmod 755 /usr/local/opnsense/scripts/additional/check-tailscale-status.php 2>/dev/null || true
 chmod 755 /usr/local/opnsense/scripts/additional/check-wan-gateway-loss.php 2>/dev/null || true
@@ -65,6 +66,7 @@ php -l /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional/Api/Udp2rawCo
 
 php -l /usr/local/opnsense/scripts/additional/lib.php
 php -l /usr/local/opnsense/scripts/additional/updategeoip.php
+/usr/local/bin/python3 -m py_compile /usr/local/opnsense/scripts/additional/mmdb_to_geoip_alias.py 2>/dev/null || python3 -m py_compile /usr/local/opnsense/scripts/additional/mmdb_to_geoip_alias.py
 php -l /usr/local/opnsense/scripts/additional/check-wg-status.php
 php -l /usr/local/opnsense/scripts/additional/check-tailscale-status.php
 php -l /usr/local/opnsense/scripts/additional/check-wan-gateway-loss.php

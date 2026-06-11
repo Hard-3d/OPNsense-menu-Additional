@@ -5,7 +5,7 @@
 ## Разделы
 
 - **Ethname** — управление `/etc/rc.conf.d/ethname`, установка `ethname` при первом открытии.
-- **GeoIP update** — скачивание GeoIP MMDB по трём прямым URL с fallback.
+- **GeoIP update** — скачивание GeoIP MMDB по трём прямым URL с fallback и конвертация в OPNsense alias ranges.
 - **Check VPN status** — проверка WireGuard и Tailscale, статус Cron.
 - **Check WAN** — контроль потерь WAN gateway и переключение priority.
 - **udp2raw** — управление udp2raw client/server instances без правки WireGuard service files.
@@ -18,7 +18,7 @@
 
 ```sh
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.45-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.46-root.zip
 chmod 755 /install.sh
 /install.sh
 ```
@@ -45,14 +45,14 @@ usr/local/opnsense/...
 
 Пример:
 
-- tag: `v0.1.45`
-- asset: `opnsense-additional-menu-v0.1.45-root.zip`
+- tag: `v0.1.46`
+- asset: `opnsense-additional-menu-v0.1.46-root.zip`
 
 В самой странице **Update** укажите:
 
 ```text
 Repository URL: https://github.com/OWNER/REPO
-Release asset name: opnsense-additional-menu-v0.1.45-root.zip
+Release asset name: opnsense-additional-menu-v0.1.46-root.zip
 ```
 
 Если поле **Release asset name** оставить пустым, updater попробует установить GitHub source ZIP latest release. Это тоже поддерживается, если в корне репозитория есть `install.sh`.
@@ -68,7 +68,7 @@ Release asset name: opnsense-additional-menu-v0.1.45-root.zip
 Для новой версии:
 
 1. Измените файл `usr/local/opnsense/scripts/additional/VERSION`.
-2. Создайте новый git tag, например `v0.1.45`.
+2. Создайте новый git tag, например `v0.1.46`.
 3. Соберите новый root ZIP.
 4. Загрузите ZIP в GitHub Release.
 
@@ -82,9 +82,12 @@ Release asset name: opnsense-additional-menu-v0.1.45-root.zip
 После установки служебные файлы `install.sh`, `README.md`, `README_INSTALL.txt`, `.gitignore` удаляются из корня `/` и сохраняются в `/usr/local/opnsense/scripts/additional/package/`.
 
 
-## v0.1.45
+## v0.1.46
 
-- GeoIP: исправлена JS-ошибка в кнопке `Обновить` на странице MMDB. Модальное подтверждение и AJAX-запрос обновления снова выполняются.
+- GeoIP MMDB теперь не только скачивается, но и конвертируется в OPNsense alias-файлы `/usr/local/share/GeoIP/alias/<COUNTRY>-IPv4|IPv6`.
+- Сохранены три fallback-источника MMDB; если источник не скачался или не конвертируется, используется следующий URL.
+- После конвертации запускается refresh firewall aliases, поэтому `Alias ranges` должен стать больше 0.
+- Добавлен dependency-free конвертер `mmdb_to_geoip_alias.py`.
 
 ## v0.1.44
 
