@@ -619,8 +619,7 @@ $(document).ready(function() {
 
         showConfirmModal(
             "Обновление GeoIP MMDB",
-            "Скачать GeoIP MMDB?
-Если первый источник недоступен, будет использован следующий.",
+            "Скачать GeoIP MMDB?\nЕсли первый источник недоступен, будет использован следующий.",
             "Обновить",
             function() {
                 $("#btn_geoip_update").prop("disabled", true);
