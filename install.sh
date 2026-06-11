@@ -75,10 +75,11 @@ php -l /usr/local/opnsense/scripts/additional/udp2raw-manager.php
 
 # migrate GeoIP source settings away from the discontinued mamamialezatoz endpoint
 GEOIP_CONFIG="/usr/local/opnsense/scripts/additional/geoip_update.json"
-GEOIP_DEFAULT="https://github.com/runetfreedom/russia-blocked-geoip/archive/refs/heads/release.zip"
-if [ ! -f "${GEOIP_CONFIG}" ] || grep -Eq 'mamamialezatoz|geoip-database|github.com/runetfreedom/russia-blocked-geoip/releases' "${GEOIP_CONFIG}" 2>/dev/null; then
+GEOIP_DEFAULT="https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/text/"
+GEOIP_MMDB_DEFAULT="https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb"
+if [ ! -f "${GEOIP_CONFIG}" ] || grep -Eq 'mamamialezatoz|geoip-database|github.com/runetfreedom/russia-blocked-geoip/releases|archive/refs/heads/release.zip' "${GEOIP_CONFIG}" 2>/dev/null; then
     mkdir -p "$(dirname "${GEOIP_CONFIG}")"
-    printf '{\n    "base_url": "%s"\n}\n' "${GEOIP_DEFAULT}" > "${GEOIP_CONFIG}"
+    printf '{\n    "base_url": "%s",\n    "mmdb_url": "%s",\n    "download_mmdb": true\n}\n' "${GEOIP_DEFAULT}" "${GEOIP_MMDB_DEFAULT}" > "${GEOIP_CONFIG}"
     chown root:wheel "${GEOIP_CONFIG}" 2>/dev/null || true
     chmod 644 "${GEOIP_CONFIG}" 2>/dev/null || true
 fi

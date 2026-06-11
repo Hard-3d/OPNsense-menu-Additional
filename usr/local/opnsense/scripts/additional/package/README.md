@@ -18,7 +18,7 @@
 
 ```sh
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.41-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.42-root.zip
 chmod 755 /install.sh
 /install.sh
 ```
@@ -45,14 +45,14 @@ usr/local/opnsense/...
 
 Пример:
 
-- tag: `v0.1.41`
-- asset: `opnsense-additional-menu-v0.1.41-root.zip`
+- tag: `v0.1.42`
+- asset: `opnsense-additional-menu-v0.1.42-root.zip`
 
 В самой странице **Update** укажите:
 
 ```text
 Repository URL: https://github.com/OWNER/REPO
-Release asset name: opnsense-additional-menu-v0.1.41-root.zip
+Release asset name: opnsense-additional-menu-v0.1.42-root.zip
 ```
 
 Если поле **Release asset name** оставить пустым, updater попробует установить GitHub source ZIP latest release. Это тоже поддерживается, если в корне репозитория есть `install.sh`.
@@ -68,7 +68,7 @@ Release asset name: opnsense-additional-menu-v0.1.41-root.zip
 Для новой версии:
 
 1. Измените файл `usr/local/opnsense/scripts/additional/VERSION`.
-2. Создайте новый git tag, например `v0.1.41`.
+2. Создайте новый git tag, например `v0.1.42`.
 3. Соберите новый root ZIP.
 4. Загрузите ZIP в GitHub Release.
 
@@ -82,10 +82,10 @@ Release asset name: opnsense-additional-menu-v0.1.41-root.zip
 После установки служебные файлы `install.sh`, `README.md`, `README_INSTALL.txt`, `.gitignore` удаляются из корня `/` и сохраняются в `/usr/local/opnsense/scripts/additional/package/`.
 
 
-## v0.1.41
+## v0.1.42
 
 - GeoIP update переведён со старого `mamamialezatoz/geoip-database` на `runetfreedom/russia-blocked-geoip`.
-- URL в настройках автоматически мигрируется на `https://github.com/runetfreedom/russia-blocked-geoip/archive/refs/heads/release.zip`.
+- URL в настройках автоматически мигрируется на `https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/text/`.
 - Добавлен разбор готовых `text/*.txt` списков из ветки `release`; старый CSV-режим оставлен как fallback для совместимых источников.
 
 ## v0.1.40

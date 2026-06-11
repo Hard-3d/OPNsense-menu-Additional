@@ -15,7 +15,8 @@
         max-width: 920px;
     }
 
-    #geoip_base_url {
+    #geoip_base_url,
+    #geoip_mmdb_url {
         width: 820px !important;
         max-width: 100% !important;
         display: block;
@@ -113,7 +114,8 @@ $(document).ready(function() {
         var result = {
             address_count: null,
             timestamp: null,
-            file_count: null
+            file_count: null,
+            mmdb: null
         };
 
         function walk(value) {
@@ -133,6 +135,10 @@ $(document).ready(function() {
                 result.file_count = value.file_count;
             }
 
+            if (Object.prototype.hasOwnProperty.call(value, "mmdb") && typeof value.mmdb === "object") {
+                result.mmdb = value.mmdb;
+            }
+
             Object.keys(value).forEach(function(key) {
                 if (typeof value[key] === "object") {
                     walk(value[key]);
@@ -145,7 +151,8 @@ $(document).ready(function() {
         return {
             address_count: result.address_count !== null && result.address_count !== undefined ? result.address_count : 0,
             timestamp: result.timestamp || "",
-            file_count: result.file_count !== null && result.file_count !== undefined ? result.file_count : ""
+            file_count: result.file_count !== null && result.file_count !== undefined ? result.file_count : "",
+            mmdb: result.mmdb || {}
         };
     }
 
@@ -276,6 +283,12 @@ $(document).ready(function() {
             $("#geoip_file_count").text(stats.file_count);
         } else {
             $("#geoip_file_count").text("-");
+        }
+
+        if (stats.mmdb && stats.mmdb.file) {
+            $("#geoip_mmdb_file").text(stats.mmdb.file + " (" + (stats.mmdb.size_bytes || "?") + " bytes)");
+        } else {
+            $("#geoip_mmdb_file").text("-");
         }
     }
 
@@ -556,6 +569,8 @@ $(document).ready(function() {
         ajaxCall("/api/additional/geoip/get", {}, function(data, status) {
             if (data.status === "ok") {
                 $("#geoip_base_url").val(data.base_url);
+                $("#geoip_mmdb_url").val(data.mmdb_url || data.default_mmdb_url || "");
+                $("#geoip_download_mmdb").prop("checked", data.download_mmdb !== false && data.download_mmdb !== "0");
                 renderStats(normalizeGeoIpStats(data));
                 loadCoreGeoIpStatus();
                 loadCronStatus();
@@ -567,14 +582,20 @@ $(document).ready(function() {
 
     $("#btn_geoip_save_url").click(function() {
         var baseUrl = $("#geoip_base_url").val();
+        var mmdbUrl = $("#geoip_mmdb_url").val();
+        var downloadMmdb = $("#geoip_download_mmdb").is(":checked") ? "1" : "0";
 
-        showMessage("info", "Сохраняю URL...");
+        showMessage("info", "Saving URLs...");
 
         ajaxCall("/api/additional/geoip/set", {
-            base_url: baseUrl
+            base_url: baseUrl,
+            mmdb_url: mmdbUrl,
+            download_mmdb: downloadMmdb
         }, function(data, status) {
             if (data.status === "ok") {
                 $("#geoip_base_url").val(data.base_url);
+                $("#geoip_mmdb_url").val(data.mmdb_url || data.default_mmdb_url || "");
+                $("#geoip_download_mmdb").prop("checked", data.download_mmdb !== false && data.download_mmdb !== "0");
                 showMessage("success", data.message);
             } else {
                 showMessage("danger", data.message || "Ошибка сохранения URL");
@@ -584,6 +605,8 @@ $(document).ready(function() {
 
     $("#btn_geoip_update").click(function() {
         var baseUrl = $("#geoip_base_url").val();
+        var mmdbUrl = $("#geoip_mmdb_url").val();
+        var downloadMmdb = $("#geoip_download_mmdb").is(":checked") ? "1" : "0";
 
         showConfirmModal(
             "Обновление GeoIP",
@@ -594,7 +617,9 @@ $(document).ready(function() {
                 showMessage("info", "Идёт обновление GeoIP. Дождитесь завершения...");
 
                 ajaxCall("/api/additional/geoip/update", {
-                    base_url: baseUrl
+                    base_url: baseUrl,
+                    mmdb_url: mmdbUrl,
+                    download_mmdb: downloadMmdb
                 }, function(data, status) {
                     $("#btn_geoip_update").prop("disabled", false);
 
@@ -628,8 +653,26 @@ $(document).ready(function() {
                        class="form-control"
                        style="width: 820px !important; max-width: 100% !important; display: block;"
                        spellcheck="false"
-                       placeholder="https://github.com/runetfreedom/russia-blocked-geoip/archive/refs/heads/release.zip">
-                <span class="help-block">По умолчанию используется ZIP ветки release нового runetfreedom/russia-blocked-geoip. Старые mamamialezatoz и runetfreedom /releases/ URL автоматически мигрируются на рабочий источник.</span>
+                       placeholder="https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/text/">
+                <span class="help-block">Direct source for alias files. Default uses raw text files from the release branch: text/&lt;country&gt;.txt. ZIP and legacy MaxMind CSV sources are still supported.</span>
+            </div>
+
+            <div class="form-group">
+                <label for="geoip_mmdb_url">MMDB direct URL</label>
+                <input type="text"
+                       id="geoip_mmdb_url"
+                       class="form-control"
+                       style="width: 820px !important; max-width: 100% !important; display: block;"
+                       spellcheck="false"
+                       placeholder="https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb">
+                <span class="help-block">Optional direct MMDB download. Firewall alias files are generated from the text/CIDR source above; MMDB is stored as /usr/local/share/GeoIP/runetfreedom-Country.mmdb.</span>
+            </div>
+
+            <div class="checkbox">
+                <label>
+                    <input type="checkbox" id="geoip_download_mmdb" checked>
+                    Download MMDB during update
+                </label>
             </div>
 
             <button id="btn_geoip_save_url" type="button" class="btn btn-default">
@@ -658,6 +701,10 @@ $(document).ready(function() {
                 <tr>
                     <th>Alias files</th>
                     <td id="geoip_file_count">-</td>
+                </tr>
+                <tr>
+                    <th>MMDB file</th>
+                    <td id="geoip_mmdb_file">-</td>
                 </tr>
                 <tr>
                     <th>Задание Scheduler</th>

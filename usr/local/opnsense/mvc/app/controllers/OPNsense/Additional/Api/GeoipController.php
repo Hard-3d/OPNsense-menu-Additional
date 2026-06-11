@@ -9,7 +9,8 @@ class GeoipController extends ApiControllerBase
 {
     private const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/geoip_update.json';
 
-    private const DEFAULT_BASE_URL = 'https://github.com/runetfreedom/russia-blocked-geoip/archive/refs/heads/release.zip';
+    private const DEFAULT_BASE_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/text/';
+    private const DEFAULT_MMDB_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb';
     private const UPDATE_SCRIPT = '/usr/local/opnsense/scripts/additional/updategeoip.php';
 
     private const STATS_FILE = '/usr/local/share/GeoIP/alias.stats';
@@ -23,16 +24,21 @@ class GeoipController extends ApiControllerBase
             || strpos($lower, 'github.com/runetfreedom/russia-blocked-geoip/releases') !== false;
     }
 
+    private function isMmdbSourceUrl(string $url): bool
+    {
+        return preg_match('~\.mmdb(?:$|[?&#])~i', trim($url)) === 1;
+    }
+
     private function normalizeBaseUrl(string $url): string
     {
         $url = trim($url);
 
-        if ($this->isLegacyGeoIpUrl($url)) {
+        if ($this->isLegacyGeoIpUrl($url) || $this->isMmdbSourceUrl($url)) {
             $url = self::DEFAULT_BASE_URL;
         }
 
         if (!preg_match('#^https?://#i', $url)) {
-            throw new \RuntimeException('URL должен начинаться с http:// или https://');
+            throw new \RuntimeException('Source URL must start with http:// or https://');
         }
 
         if (preg_match('~\.zip(?:$|[?&#])~i', $url)) {
@@ -40,6 +46,31 @@ class GeoipController extends ApiControllerBase
         }
 
         return rtrim($url, '/') . '/';
+    }
+
+    private function normalizeMmdbUrl(string $url): string
+    {
+        $url = trim($url);
+
+        if ($url === '') {
+            return self::DEFAULT_MMDB_URL;
+        }
+
+        if (!preg_match('#^https?://#i', $url)) {
+            throw new \RuntimeException('MMDB URL must start with http:// or https://');
+        }
+
+        if (!$this->isMmdbSourceUrl($url)) {
+            throw new \RuntimeException('MMDB URL must point to a .mmdb file');
+        }
+
+        return $url;
+    }
+
+    private function normalizeBool($value): bool
+    {
+        $parsed = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        return $parsed === null ? true : (bool)$parsed;
     }
 
     private function ensureConfigDir(): void
@@ -54,7 +85,9 @@ class GeoipController extends ApiControllerBase
     private function loadConfig(): array
     {
         $data = [
-            'base_url' => self::DEFAULT_BASE_URL
+            'base_url' => self::DEFAULT_BASE_URL,
+            'mmdb_url' => self::DEFAULT_MMDB_URL,
+            'download_mmdb' => true
         ];
 
         if (is_readable(self::CONFIG_FILE)) {
@@ -66,22 +99,35 @@ class GeoipController extends ApiControllerBase
             }
         }
 
-        try {
-            $normalized = $this->normalizeBaseUrl((string)($data['base_url'] ?? ''));
-        } catch (\Throwable $e) {
-            $normalized = self::DEFAULT_BASE_URL;
+        $original = $data;
+        $baseUrl = (string)($data['base_url'] ?? '');
+
+        if ($this->isMmdbSourceUrl($baseUrl)) {
+            $data['mmdb_url'] = $baseUrl;
+            $data['base_url'] = self::DEFAULT_BASE_URL;
+            $data['download_mmdb'] = true;
         }
 
-        if (($data['base_url'] ?? '') !== $normalized || !is_readable(self::CONFIG_FILE)) {
-            $data['base_url'] = $normalized;
+        try {
+            $data['base_url'] = $this->normalizeBaseUrl((string)($data['base_url'] ?? ''));
+        } catch (\Throwable $e) {
+            $data['base_url'] = self::DEFAULT_BASE_URL;
+        }
 
+        try {
+            $data['mmdb_url'] = $this->normalizeMmdbUrl((string)($data['mmdb_url'] ?? ''));
+        } catch (\Throwable $e) {
+            $data['mmdb_url'] = self::DEFAULT_MMDB_URL;
+        }
+
+        $data['download_mmdb'] = $this->normalizeBool($data['download_mmdb'] ?? true);
+
+        if ($data !== $original || !is_readable(self::CONFIG_FILE)) {
             try {
                 $this->saveConfig($data);
             } catch (\Throwable $e) {
-                // Settings can still be returned even if automatic migration cannot write the file.
+                // keep returning settings when automatic migration cannot write
             }
-        } else {
-            $data['base_url'] = $normalized;
         }
 
         return $data;
@@ -113,6 +159,7 @@ class GeoipController extends ApiControllerBase
             'locations_filename' => '',
             'address_sources' => [],
             'source_base_url' => '',
+            'mmdb' => [],
         ];
     }
 
@@ -125,6 +172,7 @@ class GeoipController extends ApiControllerBase
             'locations_filename' => (string)($data['locations_filename'] ?? ''),
             'address_sources' => $data['address_sources'] ?? [],
             'source_base_url' => (string)($data['source_base_url'] ?? ''),
+            'mmdb' => is_array($data['mmdb'] ?? null) ? $data['mmdb'] : [],
         ];
     }
 
@@ -204,7 +252,10 @@ class GeoipController extends ApiControllerBase
         return [
             'status' => 'ok',
             'base_url' => $config['base_url'] ?? self::DEFAULT_BASE_URL,
+            'mmdb_url' => $config['mmdb_url'] ?? self::DEFAULT_MMDB_URL,
+            'download_mmdb' => $this->normalizeBool($config['download_mmdb'] ?? true),
             'default_base_url' => self::DEFAULT_BASE_URL,
+            'default_mmdb_url' => self::DEFAULT_MMDB_URL,
             'stats' => $this->readCoreGeoIpStats(),
             'stats_source' => 'filter geoip stats / alias.stats'
         ];
@@ -214,7 +265,10 @@ class GeoipController extends ApiControllerBase
     {
         try {
             $payload = $this->request->getJsonRawBody(true);
-            $baseUrl = '';
+            $config = $this->loadConfig();
+            $baseUrl = $config['base_url'] ?? self::DEFAULT_BASE_URL;
+            $mmdbUrl = $config['mmdb_url'] ?? self::DEFAULT_MMDB_URL;
+            $downloadMmdb = $this->normalizeBool($config['download_mmdb'] ?? true);
 
             if (is_array($payload) && isset($payload['base_url'])) {
                 $baseUrl = (string)$payload['base_url'];
@@ -222,16 +276,39 @@ class GeoipController extends ApiControllerBase
                 $baseUrl = (string)$this->request->getPost('base_url');
             }
 
+            if (is_array($payload) && isset($payload['mmdb_url'])) {
+                $mmdbUrl = (string)$payload['mmdb_url'];
+            } elseif ($this->request->hasPost('mmdb_url')) {
+                $mmdbUrl = (string)$this->request->getPost('mmdb_url');
+            }
+
+            if (is_array($payload) && array_key_exists('download_mmdb', $payload)) {
+                $downloadMmdb = $this->normalizeBool($payload['download_mmdb']);
+            } elseif ($this->request->hasPost('download_mmdb')) {
+                $downloadMmdb = $this->normalizeBool($this->request->getPost('download_mmdb'));
+            }
+
+            if ($this->isMmdbSourceUrl($baseUrl)) {
+                $mmdbUrl = $baseUrl;
+                $baseUrl = self::DEFAULT_BASE_URL;
+                $downloadMmdb = true;
+            }
+
             $baseUrl = $this->normalizeBaseUrl($baseUrl);
+            $mmdbUrl = $this->normalizeMmdbUrl($mmdbUrl);
 
             $this->saveConfig([
-                'base_url' => $baseUrl
+                'base_url' => $baseUrl,
+                'mmdb_url' => $mmdbUrl,
+                'download_mmdb' => $downloadMmdb
             ]);
 
             return [
                 'status' => 'ok',
-                'message' => 'URL сохранён',
-                'base_url' => $baseUrl
+                'message' => 'URL settings saved',
+                'base_url' => $baseUrl,
+                'mmdb_url' => $mmdbUrl,
+                'download_mmdb' => $downloadMmdb
             ];
         } catch (\Throwable $e) {
             return [
@@ -259,6 +336,8 @@ class GeoipController extends ApiControllerBase
             $config = $this->loadConfig();
 
             $baseUrl = $config['base_url'] ?? self::DEFAULT_BASE_URL;
+            $mmdbUrl = $config['mmdb_url'] ?? self::DEFAULT_MMDB_URL;
+            $downloadMmdb = $this->normalizeBool($config['download_mmdb'] ?? true);
 
             if (is_array($payload) && !empty($payload['base_url'])) {
                 $baseUrl = (string)$payload['base_url'];
@@ -266,10 +345,31 @@ class GeoipController extends ApiControllerBase
                 $baseUrl = (string)$this->request->getPost('base_url');
             }
 
+            if (is_array($payload) && isset($payload['mmdb_url'])) {
+                $mmdbUrl = (string)$payload['mmdb_url'];
+            } elseif ($this->request->hasPost('mmdb_url')) {
+                $mmdbUrl = (string)$this->request->getPost('mmdb_url');
+            }
+
+            if (is_array($payload) && array_key_exists('download_mmdb', $payload)) {
+                $downloadMmdb = $this->normalizeBool($payload['download_mmdb']);
+            } elseif ($this->request->hasPost('download_mmdb')) {
+                $downloadMmdb = $this->normalizeBool($this->request->getPost('download_mmdb'));
+            }
+
+            if ($this->isMmdbSourceUrl($baseUrl)) {
+                $mmdbUrl = $baseUrl;
+                $baseUrl = self::DEFAULT_BASE_URL;
+                $downloadMmdb = true;
+            }
+
             $baseUrl = $this->normalizeBaseUrl($baseUrl);
+            $mmdbUrl = $this->normalizeMmdbUrl($mmdbUrl);
 
             $this->saveConfig([
-                'base_url' => $baseUrl
+                'base_url' => $baseUrl,
+                'mmdb_url' => $mmdbUrl,
+                'download_mmdb' => $downloadMmdb
             ]);
 
             if (!is_executable(self::UPDATE_SCRIPT)) {
@@ -280,9 +380,11 @@ class GeoipController extends ApiControllerBase
             }
 
             $command = sprintf(
-                '%s --base-url=%s',
+                '%s --base-url=%s --mmdb-url=%s %s',
                 escapeshellcmd(self::UPDATE_SCRIPT),
-                escapeshellarg($baseUrl)
+                escapeshellarg($baseUrl),
+                escapeshellarg($mmdbUrl),
+                $downloadMmdb ? '--download-mmdb' : '--no-mmdb'
             );
 
             $result = $this->runCommand($command);

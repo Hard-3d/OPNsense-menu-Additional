@@ -5,11 +5,13 @@ const SCRIPT_NAME = 'updategeoip-php';
 
 const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/geoip_update.json';
 
-const DEFAULT_BASE_URL = 'https://github.com/runetfreedom/russia-blocked-geoip/archive/refs/heads/release.zip';
+const DEFAULT_BASE_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/text/';
 const DEFAULT_TEXT_BASE_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/text/';
+const DEFAULT_MMDB_URL = 'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb';
 const OLD_BASE_URL = 'https://github.com/mamamialezatoz/geoip-database/releases/latest/download/';
 
 const ALIAS_DIR = '/usr/local/share/GeoIP/alias';
+const MMDB_FILE = '/usr/local/share/GeoIP/runetfreedom-Country.mmdb';
 
 const STATS_FILE = '/usr/local/share/GeoIP/alias.stats';
 
@@ -53,6 +55,8 @@ function parseArgs(array $argv): array
 {
     $args = [
         'base_url' => null,
+        'mmdb_url' => null,
+        'download_mmdb' => null,
         'silent' => false,
         'clean_old' => true,
         'refresh_aliases' => true,
@@ -67,6 +71,12 @@ function parseArgs(array $argv): array
             $args['refresh_aliases'] = false;
         } elseif (strpos($arg, '--base-url=') === 0) {
             $args['base_url'] = substr($arg, strlen('--base-url='));
+        } elseif (strpos($arg, '--mmdb-url=') === 0) {
+            $args['mmdb_url'] = substr($arg, strlen('--mmdb-url='));
+        } elseif ($arg === '--download-mmdb') {
+            $args['download_mmdb'] = true;
+        } elseif ($arg === '--no-mmdb') {
+            $args['download_mmdb'] = false;
         }
     }
 
@@ -82,16 +92,21 @@ function isLegacyGeoIpUrl(string $url): bool
         || strpos($lower, 'github.com/runetfreedom/russia-blocked-geoip/releases') !== false;
 }
 
+function isMmdbSourceUrl(string $url): bool
+{
+    return preg_match('~\.mmdb(?:$|[?&#])~i', trim($url)) === 1;
+}
+
 function normalizeBaseUrl(string $url): string
 {
     $url = trim($url);
 
-    if (isLegacyGeoIpUrl($url)) {
+    if (isLegacyGeoIpUrl($url) || isMmdbSourceUrl($url)) {
         $url = DEFAULT_BASE_URL;
     }
 
     if (!preg_match('#^https?://#i', $url)) {
-        throw new RuntimeException('Source URL должен начинаться с http:// или https://');
+        throw new RuntimeException('Source URL must start with http:// or https://');
     }
 
     if (preg_match('~\.zip(?:$|[?&#])~i', $url)) {
@@ -101,44 +116,85 @@ function normalizeBaseUrl(string $url): string
     return rtrim($url, '/') . '/';
 }
 
-function saveConfigBaseUrl(string $baseUrl): void
+function normalizeMmdbUrl(string $url): string
+{
+    $url = trim($url);
+
+    if ($url === '') {
+        return DEFAULT_MMDB_URL;
+    }
+
+    if (!preg_match('#^https?://#i', $url)) {
+        throw new RuntimeException('MMDB URL must start with http:// or https://');
+    }
+
+    if (!isMmdbSourceUrl($url)) {
+        throw new RuntimeException('MMDB URL must point to a .mmdb file');
+    }
+
+    return $url;
+}
+
+function saveConfigSettings(array $settings): void
 {
     ensureDir(dirname(CONFIG_FILE), 0755);
 
-    $json = json_encode(['base_url' => $baseUrl], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $json = json_encode($settings, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
     if ($json === false) {
-        throw new RuntimeException('Не удалось сформировать настройки GeoIP');
+        throw new RuntimeException('Could not encode GeoIP settings');
     }
 
     if (file_put_contents(CONFIG_FILE, $json . "\n", LOCK_EX) === false) {
-        throw new RuntimeException('Не удалось записать настройки GeoIP: ' . CONFIG_FILE);
+        throw new RuntimeException('Could not write GeoIP settings: ' . CONFIG_FILE);
     }
 
     chmod(CONFIG_FILE, 0644);
 }
 
-function loadConfigBaseUrl(): string
+function loadConfigSettings(): array
 {
-    $baseUrl = DEFAULT_BASE_URL;
+    $settings = [
+        'base_url' => DEFAULT_BASE_URL,
+        'mmdb_url' => DEFAULT_MMDB_URL,
+        'download_mmdb' => true,
+    ];
 
     if (is_readable(CONFIG_FILE)) {
         $raw = file_get_contents(CONFIG_FILE);
         if ($raw !== false && trim($raw) !== '') {
             $data = json_decode($raw, true);
-            if (is_array($data) && !empty($data['base_url'])) {
-                $baseUrl = (string)$data['base_url'];
+            if (is_array($data)) {
+                $settings = array_merge($settings, $data);
             }
         }
     }
 
-    $normalized = normalizeBaseUrl($baseUrl);
+    $original = $settings;
+    $baseUrl = (string)($settings['base_url'] ?? '');
 
-    if ($normalized !== $baseUrl || !is_readable(CONFIG_FILE)) {
-        saveConfigBaseUrl($normalized);
+    if (isMmdbSourceUrl($baseUrl)) {
+        $settings['mmdb_url'] = $baseUrl;
+        $settings['base_url'] = DEFAULT_BASE_URL;
+        $settings['download_mmdb'] = true;
     }
 
-    return $normalized;
+    $settings['base_url'] = normalizeBaseUrl((string)$settings['base_url']);
+    $settings['mmdb_url'] = normalizeMmdbUrl((string)($settings['mmdb_url'] ?? ''));
+    $parsedBool = filter_var($settings['download_mmdb'] ?? true, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+    $settings['download_mmdb'] = $parsedBool === null ? true : (bool)$parsedBool;
+
+    if ($settings !== $original || !is_readable(CONFIG_FILE)) {
+        saveConfigSettings($settings);
+    }
+
+    return $settings;
+}
+
+function loadConfigBaseUrl(): string
+{
+    $settings = loadConfigSettings();
+    return $settings['base_url'];
 }
 
 function ensureDir(string $path, int $mode = 0755): void
@@ -218,6 +274,35 @@ function downloadFile(string $url, string $destination, bool $required = true): 
     }
 
     throw new RuntimeException('Не удалось скачать файл: ' . $url . '; ' . implode('; ', $errors));
+}
+
+function downloadMmdbDatabase(string $url, string $tmpDownloadDir, bool $silent): array
+{
+    $url = normalizeMmdbUrl($url);
+    ensureDir(dirname(MMDB_FILE), 0755);
+
+    $tmpFile = $tmpDownloadDir . '/Country.mmdb';
+
+    out('Downloading MMDB: ' . $url, $silent);
+    downloadFile($url, $tmpFile);
+
+    $size = filesize($tmpFile);
+    if ($size === false || $size < 1024) {
+        throw new RuntimeException('Downloaded MMDB file is too small or unreadable');
+    }
+
+    if (!copy($tmpFile, MMDB_FILE)) {
+        throw new RuntimeException('Could not install MMDB file: ' . MMDB_FILE);
+    }
+
+    chmod(MMDB_FILE, 0644);
+
+    return [
+        'url' => $url,
+        'file' => MMDB_FILE,
+        'size_bytes' => (int)$size,
+        'timestamp' => date('c'),
+    ];
 }
 
 function openCsv(string $file)
@@ -437,7 +522,7 @@ function installAliasFiles(string $tmpAliasDir, string $aliasDir, bool $cleanOld
     ];
 }
 
-function writeStats(int $addressCount, int $fileCount, string $baseUrl, array $sourceInfo): void
+function writeStats(int $addressCount, int $fileCount, string $baseUrl, array $sourceInfo, ?array $mmdbInfo = null): void
 {
     ensureDir(dirname(STATS_FILE), 0755);
 
@@ -449,6 +534,7 @@ function writeStats(int $addressCount, int $fileCount, string $baseUrl, array $s
         'address_sources' => $sourceInfo['address_sources'] ?? [],
         'source_base_url' => $baseUrl,
         'source_mode' => $sourceInfo['source_mode'] ?? '',
+        'mmdb' => $mmdbInfo ?? [],
     ];
 
     $json = json_encode($stats, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -511,10 +597,7 @@ function isZipSource(string $url): bool
 
 function isRunetFreedomTextSource(string $url): bool
 {
-    $lower = strtolower($url);
-
-    return strpos($lower, 'runetfreedom/russia-blocked-geoip') !== false
-        && strpos($lower, '/text/') !== false;
+    return strpos(strtolower($url), '/text/') !== false;
 }
 
 function isRunetFreedomGenericSource(string $url): bool
@@ -791,8 +874,20 @@ $handles = [];
 $workDir = null;
 
 try {
-    $baseUrl = $args['base_url'] !== null ? $args['base_url'] : loadConfigBaseUrl();
-    $baseUrl = normalizeBaseUrl($baseUrl);
+    $settings = loadConfigSettings();
+
+    $baseUrlInput = $args['base_url'] !== null ? $args['base_url'] : $settings['base_url'];
+    $mmdbUrl = $args['mmdb_url'] !== null ? $args['mmdb_url'] : $settings['mmdb_url'];
+    $downloadMmdb = $args['download_mmdb'] !== null ? $args['download_mmdb'] : (bool)$settings['download_mmdb'];
+
+    if (isMmdbSourceUrl((string)$baseUrlInput)) {
+        $mmdbUrl = (string)$baseUrlInput;
+        $baseUrlInput = DEFAULT_BASE_URL;
+        $downloadMmdb = true;
+    }
+
+    $baseUrl = normalizeBaseUrl((string)$baseUrlInput);
+    $mmdbUrl = normalizeMmdbUrl((string)$mmdbUrl);
 
     $workDir = sys_get_temp_dir() . '/updategeoip_php_' . getmypid();
     $tmpCsvDir = $workDir . '/csv';
@@ -819,11 +914,9 @@ try {
         out('Разбираю runetfreedom text base', $silent);
         $sourceInfo = processRunetFreedomTextBase($baseUrl, $tmpTextDir, $tmpAliasDir, $handles, $silent);
     } elseif (isRunetFreedomGenericSource($baseUrl)) {
-        out('Для runetfreedom используется release.zip: ' . DEFAULT_BASE_URL, $silent);
-        $baseUrl = DEFAULT_BASE_URL;
-        $zipFile = $tmpZipDir . '/source.zip';
-        downloadFile($baseUrl, $zipFile);
-        $sourceInfo = processRunetFreedomZip($zipFile, $tmpExtractDir, $tmpAliasDir, $handles);
+        out('Using runetfreedom text base: ' . DEFAULT_TEXT_BASE_URL, $silent);
+        $baseUrl = DEFAULT_TEXT_BASE_URL;
+        $sourceInfo = processRunetFreedomTextBase($baseUrl, $tmpTextDir, $tmpAliasDir, $handles, $silent);
     } else {
         $sourceInfo = processLegacyCsvSource($baseUrl, $tmpCsvDir, $tmpAliasDir, $handles, $silent);
     }
@@ -833,7 +926,22 @@ try {
     out('Записываю alias-файлы в ' . ALIAS_DIR, $silent);
     $written = installAliasFiles($tmpAliasDir, ALIAS_DIR, $args['clean_old']);
 
-    writeStats($written['address_count'], $written['file_count'], $baseUrl, $sourceInfo);
+    $mmdbInfo = null;
+    if ($downloadMmdb) {
+        try {
+            $mmdbInfo = downloadMmdbDatabase($mmdbUrl, $tmpTextDir, $silent);
+        } catch (Throwable $mmdbError) {
+            $mmdbInfo = [
+                'url' => $mmdbUrl,
+                'file' => MMDB_FILE,
+                'error' => $mmdbError->getMessage(),
+                'timestamp' => date('c'),
+            ];
+            out('WARNING: MMDB download failed: ' . $mmdbError->getMessage(), $silent);
+        }
+    }
+
+    writeStats($written['address_count'], $written['file_count'], $baseUrl, $sourceInfo, $mmdbInfo);
 
     if ($args['refresh_aliases']) {
         refreshAliases($silent);
@@ -846,7 +954,12 @@ try {
     out('Total number of ranges: ' . $written['address_count'], $silent);
     out('Alias files: ' . $written['file_count'], $silent);
     out('Source mode: ' . $sourceInfo['source_mode'], $silent);
-    out('Готово', $silent);
+    if ($mmdbInfo !== null && isset($mmdbInfo['size_bytes'])) {
+        out('MMDB file: ' . $mmdbInfo['file'] . ' (' . $mmdbInfo['size_bytes'] . ' bytes)', $silent);
+    } elseif ($mmdbInfo !== null && isset($mmdbInfo['error'])) {
+        out('MMDB warning: ' . $mmdbInfo['error'], $silent);
+    }
+    out('Done', $silent);
 
     exit(0);
 } catch (Throwable $e) {
