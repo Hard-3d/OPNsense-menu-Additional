@@ -18,7 +18,7 @@
 
 ```sh
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.46-root.zip
+unzip -o /root/opnsense-additional-menu-v0.1.47-root.zip
 chmod 755 /install.sh
 /install.sh
 ```
@@ -45,14 +45,14 @@ usr/local/opnsense/...
 
 Пример:
 
-- tag: `v0.1.46`
-- asset: `opnsense-additional-menu-v0.1.46-root.zip`
+- tag: `v0.1.47`
+- asset: `opnsense-additional-menu-v0.1.47-root.zip`
 
 В самой странице **Update** укажите:
 
 ```text
 Repository URL: https://github.com/OWNER/REPO
-Release asset name: opnsense-additional-menu-v0.1.46-root.zip
+Release asset name: opnsense-additional-menu-v0.1.47-root.zip
 ```
 
 Если поле **Release asset name** оставить пустым, updater попробует установить GitHub source ZIP latest release. Это тоже поддерживается, если в корне репозитория есть `install.sh`.
@@ -68,7 +68,7 @@ Release asset name: opnsense-additional-menu-v0.1.46-root.zip
 Для новой версии:
 
 1. Измените файл `usr/local/opnsense/scripts/additional/VERSION`.
-2. Создайте новый git tag, например `v0.1.46`.
+2. Создайте новый git tag, например `v0.1.47`.
 3. Соберите новый root ZIP.
 4. Загрузите ZIP в GitHub Release.
 
@@ -82,12 +82,12 @@ Release asset name: opnsense-additional-menu-v0.1.46-root.zip
 После установки служебные файлы `install.sh`, `README.md`, `README_INSTALL.txt`, `.gitignore` удаляются из корня `/` и сохраняются в `/usr/local/opnsense/scripts/additional/package/`.
 
 
-## v0.1.46
+## v0.1.47
 
-- GeoIP MMDB теперь не только скачивается, но и конвертируется в OPNsense alias-файлы `/usr/local/share/GeoIP/alias/<COUNTRY>-IPv4|IPv6`.
-- Сохранены три fallback-источника MMDB; если источник не скачался или не конвертируется, используется следующий URL.
-- После конвертации запускается refresh firewall aliases, поэтому `Alias ranges` должен стать больше 0.
-- Добавлен dependency-free конвертер `mmdb_to_geoip_alias.py`.
+- GeoIP MMDB-конвертер теперь создаёт OPNsense alias-файлы только для настоящих ISO 3166-1 alpha-2 country-кодов.
+- Технические категории из отдельных MMDB-источников, например `PRIVATE`, `RE_FILTER`, `RU_BLOCKED`, `RU_BLOCKED_COMMUNITY`, `RU_WHITELIST`, больше не попадают в `/usr/local/share/GeoIP/alias`.
+- При следующем обновлении старые не-country alias-файлы от предыдущей сборки будут удалены автоматически.
+- Сохранены три fallback-источника MMDB и конвертация в `/usr/local/share/GeoIP/alias/<COUNTRY>-IPv4|IPv6`.
 
 ## v0.1.44
 
