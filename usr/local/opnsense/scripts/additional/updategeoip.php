@@ -5,6 +5,12 @@ const SCRIPT_NAME = 'updategeoip-php';
 const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/geoip_update.json';
 
 const DEFAULT_MMDB_URLS = [
+    'https://git.io/GeoLite2-Country.mmdb',
+    'https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb',
+    'https://raw.githubusercontent.com/jsedlacek/geoip-database/master/GeoLite2-Country.mmdb'
+];
+
+const LEGACY_DEFAULT_MMDB_URLS = [
     'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb',
     'https://git.io/GeoLite2-Country.mmdb',
     'https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb'
@@ -55,6 +61,15 @@ function parseArgs(array $argv): array
     return $args;
 }
 
+
+function isLegacyDefaultMmdbUrls(array $urls): bool
+{
+    $urls = array_slice(array_pad($urls, 3, ''), 0, 3);
+
+    return $urls === LEGACY_DEFAULT_MMDB_URLS
+        || $urls === [LEGACY_DEFAULT_MMDB_URLS[0], '', ''];
+}
+
 function isMmdbSourceUrl(string $url): bool
 {
     return preg_match('~\.mmdb(?:$|[?&#])~i', trim($url)) === 1;
@@ -99,6 +114,10 @@ function normalizeMmdbUrls($value): array
     }
 
     $urls = array_slice(array_pad($urls, 3, ''), 0, 3);
+
+    if (isLegacyDefaultMmdbUrls($urls)) {
+        return DEFAULT_MMDB_URLS;
+    }
 
     $hasUrl = false;
     foreach ($urls as $url) {

@@ -11,6 +11,12 @@ class GeoipController extends ApiControllerBase
     private const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/geoip_update.json';
 
     private const DEFAULT_MMDB_URLS = [
+        'https://git.io/GeoLite2-Country.mmdb',
+        'https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb',
+        'https://raw.githubusercontent.com/jsedlacek/geoip-database/master/GeoLite2-Country.mmdb'
+    ];
+
+    private const LEGACY_DEFAULT_MMDB_URLS = [
         'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb',
         'https://git.io/GeoLite2-Country.mmdb',
         'https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb'
@@ -18,6 +24,15 @@ class GeoipController extends ApiControllerBase
 
     private const UPDATE_SCRIPT = '/usr/local/opnsense/scripts/additional/updategeoip.php';
     private const STATS_FILE = '/usr/local/share/GeoIP/alias.stats';
+
+
+    private function isLegacyDefaultMmdbUrls(array $urls): bool
+    {
+        $urls = array_slice(array_pad($urls, 3, ''), 0, 3);
+
+        return $urls === self::LEGACY_DEFAULT_MMDB_URLS
+            || $urls === [self::LEGACY_DEFAULT_MMDB_URLS[0], '', ''];
+    }
 
     private function isMmdbSourceUrl(string $url): bool
     {
@@ -63,6 +78,10 @@ class GeoipController extends ApiControllerBase
         }
 
         $urls = array_slice(array_pad($urls, 3, ''), 0, 3);
+
+        if ($this->isLegacyDefaultMmdbUrls($urls)) {
+            return self::DEFAULT_MMDB_URLS;
+        }
 
         $hasUrl = false;
         foreach ($urls as $url) {

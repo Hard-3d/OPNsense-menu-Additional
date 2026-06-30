@@ -660,7 +660,7 @@ $(document).ready(function() {
                        class="form-control"
                        style="width: 820px !important; max-width: 100% !important; display: block;"
                        spellcheck="false"
-                       placeholder="https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb">
+                       placeholder="https://git.io/GeoLite2-Country.mmdb">
                 <span class="help-block">Основной источник. Должна быть прямая ссылка на файл .mmdb.</span>
             </div>
 
@@ -671,7 +671,7 @@ $(document).ready(function() {
                        class="form-control"
                        style="width: 820px !important; max-width: 100% !important; display: block;"
                        spellcheck="false"
-                       placeholder="https://git.io/GeoLite2-Country.mmdb">
+                       placeholder="https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb">
                 <span class="help-block">Резервный источник. Используется, если первый URL недоступен.</span>
             </div>
 
@@ -682,7 +682,7 @@ $(document).ready(function() {
                        class="form-control"
                        style="width: 820px !important; max-width: 100% !important; display: block;"
                        spellcheck="false"
-                       placeholder="https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb">
+                       placeholder="https://raw.githubusercontent.com/jsedlacek/geoip-database/master/GeoLite2-Country.mmdb">
                 <span class="help-block">Второй резервный источник. Пустые поля пропускаются.</span>
             </div>
 

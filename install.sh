@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Installing OPNsense Additional Menu v0.1.48..."
+echo "Installing OPNsense Additional Menu v0.1.49..."
 
 # ownership
 chown -R root:wheel /usr/local/opnsense/mvc/app/models/OPNsense/Additional 2>/dev/null || true
@@ -77,14 +77,19 @@ php -l /usr/local/opnsense/scripts/additional/udp2raw-manager.php
 
 # migrate GeoIP source settings to MMDB-only fallback sources
 GEOIP_CONFIG="/usr/local/opnsense/scripts/additional/geoip_update.json"
-GEOIP_MMDB_DEFAULT="https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb"
-GEOIP_MMDB_DEFAULT2="https://git.io/GeoLite2-Country.mmdb"
-GEOIP_MMDB_DEFAULT3="https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb"
+GEOIP_MMDB_DEFAULT="https://git.io/GeoLite2-Country.mmdb"
+GEOIP_MMDB_DEFAULT2="https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb"
+GEOIP_MMDB_DEFAULT3="https://raw.githubusercontent.com/jsedlacek/geoip-database/master/GeoLite2-Country.mmdb"
 mkdir -p "$(dirname "${GEOIP_CONFIG}")"
 php <<'PHP'
 <?php
 $file = '/usr/local/opnsense/scripts/additional/geoip_update.json';
 $defaults = [
+    'https://git.io/GeoLite2-Country.mmdb',
+    'https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb',
+    'https://raw.githubusercontent.com/jsedlacek/geoip-database/master/GeoLite2-Country.mmdb'
+];
+$legacyDefaults = [
     'https://raw.githubusercontent.com/runetfreedom/russia-blocked-geoip/release/Country.mmdb',
     'https://git.io/GeoLite2-Country.mmdb',
     'https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb'
@@ -115,9 +120,13 @@ foreach ($urls as $url) {
         $clean[] = $url;
     }
 }
-if (empty($clean)) {
+$clean = array_slice(array_pad($clean, 3, ''), 0, 3);
+if ($clean === $legacyDefaults || $clean === [$legacyDefaults[0], '', '']) {
+    $clean = $defaults;
+} elseif (empty(array_filter($clean, static function ($url) { return trim((string)$url) !== ''; }))) {
     $clean = $defaults;
 } else {
+    $clean = array_values(array_filter($clean, static function ($url) { return trim((string)$url) !== ''; }));
     foreach ($defaults as $defaultUrl) {
         if (count($clean) >= 3) {
             break;
