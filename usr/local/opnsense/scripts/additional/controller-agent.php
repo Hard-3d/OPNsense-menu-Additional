@@ -16,7 +16,7 @@ function agent_version(): string
             return $version;
         }
     }
-    return 'v0.1.57';
+    return 'v0.1.58';
 }
 
 function default_config(): array
@@ -1216,6 +1216,81 @@ function wg_binary(): string
     return $found !== '' ? $found : 'wg';
 }
 
+
+function wg_dump_interfaces_info(): array
+{
+    $cmd = escapeshellcmd(wg_binary()) . ' show all dump';
+    $lines = shell_lines($cmd);
+    $items = [];
+    foreach ($lines as $line) {
+        $p = explode("\t", $line);
+        // Interface lines in `wg show all dump` have 5 fields:
+        // interface, private_key, public_key, listen_port, fwmark
+        if (count($p) === 5) {
+            $ifname = trim((string)($p[0] ?? ''));
+            if ($ifname === '') {
+                continue;
+            }
+            $listen = trim((string)($p[3] ?? ''));
+            $items[] = [
+                'interface' => $ifname,
+                'listen_port' => $listen,
+                'public_key' => trim((string)($p[2] ?? '')),
+                'fwmark' => trim((string)($p[4] ?? '')),
+            ];
+        }
+    }
+    return $items;
+}
+
+function enrich_wg_instances_with_runtime(array $instances, array $runtimeInfo, array $runtimeInterfaces): array
+{
+    $byPort = [];
+    foreach ($runtimeInfo as $rt) {
+        $port = trim((string)($rt['listen_port'] ?? ''));
+        if ($port !== '' && !isset($byPort[$port])) {
+            $byPort[$port] = (string)($rt['interface'] ?? '');
+        }
+    }
+
+    $used = [];
+    foreach ($instances as $idx => &$inst) {
+        $current = trim((string)($inst['interface'] ?? ''));
+        if ($current !== '') {
+            $used[$current] = true;
+            continue;
+        }
+        $port = trim((string)($inst['listen_port'] ?? ''));
+        if ($port !== '' && !empty($byPort[$port])) {
+            $inst['interface'] = $byPort[$port];
+            $inst['interface_source'] = 'wg_dump_listen_port';
+            $used[$byPort[$port]] = true;
+            continue;
+        }
+    }
+    unset($inst);
+
+    // Fallback: OPNsense may not store wg0/wg1 names in config.xml.
+    // If counts match, map remaining runtime interfaces by order after sorting by listen port/name.
+    $remainingRuntime = [];
+    foreach ($runtimeInterfaces as $ifname) {
+        $ifname = trim((string)$ifname);
+        if ($ifname !== '' && empty($used[$ifname])) {
+            $remainingRuntime[] = $ifname;
+        }
+    }
+    foreach ($instances as &$inst) {
+        if (trim((string)($inst['interface'] ?? '')) === '' && $remainingRuntime) {
+            $ifname = array_shift($remainingRuntime);
+            $inst['interface'] = $ifname;
+            $inst['interface_source'] = 'runtime_order_fallback';
+            $used[$ifname] = true;
+        }
+    }
+    unset($inst);
+    return $instances;
+}
+
 function wg_dump_peers(): array
 {
     $cmd = escapeshellcmd(wg_binary()) . ' show all dump';
@@ -1324,6 +1399,8 @@ function wireguard_status_job(): array
     $configSummary = collect_wg_config_summary();
     $configInstances = collect_wg_config_instances();
     $runtimeInterfaces = wg_interfaces();
+    $runtimeInterfaceInfo = wg_dump_interfaces_info();
+    $configInstances = enrich_wg_instances_with_runtime($configInstances, $runtimeInterfaceInfo, $runtimeInterfaces);
     $peers = collect_wg_config_peers();
     $runtime = wg_dump_peers();
     $now = time();
@@ -1380,6 +1457,7 @@ function wireguard_status_job(): array
         'config_summary' => $configSummary,
         'interfaces' => $runtimeInterfaces,
         'runtime_interfaces' => $runtimeInterfaces,
+        'runtime_interface_info' => $runtimeInterfaceInfo,
         'configured_interfaces' => $configInstances,
         'interface_count' => max(count($runtimeInterfaces), count($configInstances)),
         'peer_count' => count($peers),

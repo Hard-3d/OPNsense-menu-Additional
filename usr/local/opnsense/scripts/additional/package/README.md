@@ -1,26 +1,25 @@
-# OPNsense Additional menu v0.1.56
+# OPNsense Additional menu v0.1.58
 
-Обновление агента для OPNsense Central Controller v0.1.6.
+Исправительная версия после v0.1.57.
 
-## Что изменено
+## Главное
 
-- WireGuard status собирается автоматически при heartbeat/Run once.
-- Добавлено определение факта настройки WireGuard даже без peers.
-- В payload WireGuard добавлены поля `configured`, `interfaces`, `interface_count`, `config_summary`, `collection_mode`.
-- Отдельный job `wireguard.status` больше не нужен для обычного отображения, но сохранён для совместимости.
+- Агент v0.1.58 отправляет свою версию при heartbeat.
+- WireGuard interfaces/instances сопоставляются с runtime `wg0/wg1/...` по listen port из `wg show all dump`.
+- Если OPNsense не хранит имя `wgX` в `config.xml`, агент подставляет runtime interface автоматически.
 
-## Установка
+## Обновление
 
 ```sh
 cd /
-fetch -o /tmp/opnsense-additional-menu-v0.1.56-root.zip "URL_К_АРХИВУ"
-unzip -o /tmp/opnsense-additional-menu-v0.1.56-root.zip -d /
+fetch -o /tmp/opnsense-additional-menu-v0.1.58-root.zip "URL_К_АРХИВУ"
+unzip -o /tmp/opnsense-additional-menu-v0.1.58-root.zip -d /
 chmod +x /install.sh
 /install.sh
 configctl webgui restart
 ```
 
-После установки:
+После обновления открой:
 
 ```text
 Дополнительно -> Controller connect -> Run once
