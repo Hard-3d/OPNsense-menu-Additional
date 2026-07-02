@@ -16,7 +16,7 @@ function agent_version(): string
             return $version;
         }
     }
-    return 'v0.1.62';
+    return 'v0.1.63';
 }
 
 function default_config(): array
