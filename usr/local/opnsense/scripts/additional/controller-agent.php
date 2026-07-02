@@ -321,9 +321,189 @@ function collect_plugins(): array
     return $lines;
 }
 
+function collect_config_interfaces(): array
+{
+    $path = '/conf/config.xml';
+    if (!is_readable($path)) {
+        return [];
+    }
+    libxml_use_internal_errors(true);
+    $xml = simplexml_load_file($path);
+    if (!$xml instanceof SimpleXMLElement || !isset($xml->interfaces)) {
+        return [];
+    }
+    $items = [];
+    foreach ($xml->interfaces->children() as $key => $iface) {
+        $items[(string)$key] = [
+            'key' => (string)$key,
+            'if' => trim((string)($iface->if ?? '')),
+            'descr' => trim((string)($iface->descr ?? '')),
+            'ipaddr' => trim((string)($iface->ipaddr ?? '')),
+            'subnet' => trim((string)($iface->subnet ?? '')),
+            'ipaddrv6' => trim((string)($iface->ipaddrv6 ?? '')),
+            'subnetv6' => trim((string)($iface->subnetv6 ?? '')),
+            'gateway' => trim((string)($iface->gateway ?? '')),
+            'gatewayv6' => trim((string)($iface->gatewayv6 ?? '')),
+            'enable' => trim((string)($iface->enable ?? '')),
+        ];
+    }
+    return $items;
+}
+
+function collect_config_gateways(): array
+{
+    $path = '/conf/config.xml';
+    if (!is_readable($path)) {
+        return [];
+    }
+    libxml_use_internal_errors(true);
+    $xml = simplexml_load_file($path);
+    if (!$xml instanceof SimpleXMLElement) {
+        return [];
+    }
+    $items = [];
+    foreach (($xml->xpath('//gateway_item') ?: []) as $gw) {
+        $name = trim((string)($gw->name ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $items[$name] = [
+            'name' => $name,
+            'interface' => trim((string)($gw->interface ?? '')),
+            'gateway' => trim((string)($gw->gateway ?? '')),
+            'ipprotocol' => trim((string)($gw->ipprotocol ?? '')),
+            'descr' => trim((string)($gw->descr ?? $gw->description ?? '')),
+        ];
+    }
+    return $items;
+}
+
+function collect_default_route_interfaces(): array
+{
+    $result = [];
+    foreach (['inet', 'inet6'] as $family) {
+        $out = shell_exec('/usr/bin/netstat -rn -f ' . $family . ' 2>/dev/null') ?: '';
+        foreach (preg_split('/\R/', trim($out)) ?: [] as $line) {
+            $line = trim($line);
+            if ($line === '' || preg_match('/^(Routing|Internet|Destination|Expire|Netif|Name|Use|Flags)/i', $line)) {
+                continue;
+            }
+            $parts = preg_split('/\s+/', $line) ?: [];
+            if (count($parts) < 4) {
+                continue;
+            }
+            $destination = $parts[0];
+            if ($destination !== 'default' && $destination !== '::/0' && !str_starts_with($destination, '0.0.0.0')) {
+                continue;
+            }
+            $netif = $parts[3] ?? ($parts[count($parts) - 1] ?? '');
+            if ($netif !== '' && !ctype_digit($netif)) {
+                $result[$netif] = true;
+            }
+        }
+    }
+    return array_keys($result);
+}
+
+function first_wan_ipv4(array $wanInterfaces): ?string
+{
+    foreach ($wanInterfaces as $wan) {
+        foreach (($wan['ipv4'] ?? []) as $ip) {
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                return $ip;
+            }
+        }
+    }
+    return null;
+}
+
+function collect_wan_interfaces(): array
+{
+    $configIfs = collect_config_interfaces();
+    $gatewayItems = collect_config_gateways();
+    $defaultIfs = array_flip(collect_default_route_interfaces());
+    $runtime = collect_interfaces();
+    $runtimeByName = [];
+    foreach ($runtime as $iface) {
+        $runtimeByName[(string)($iface['name'] ?? '')] = $iface;
+    }
+
+    $items = [];
+    foreach ($configIfs as $key => $iface) {
+        $ifName = (string)($iface['if'] ?? '');
+        if ($ifName === '') {
+            continue;
+        }
+        $descr = (string)($iface['descr'] ?? '');
+        $gwName = (string)($iface['gateway'] ?? '');
+        $gw6Name = (string)($iface['gatewayv6'] ?? '');
+        $isWan = strtolower((string)$key) === 'wan'
+            || isset($defaultIfs[$ifName])
+            || ($gwName !== '' && strtolower($gwName) !== 'none')
+            || ($gw6Name !== '' && strtolower($gw6Name) !== 'none')
+            || preg_match('/\b(wan|internet|isp|provider|uplink)\b/i', $key . ' ' . $descr);
+        if (!$isWan) {
+            continue;
+        }
+        $rt = $runtimeByName[$ifName] ?? [];
+        $gw = $gatewayItems[$gwName] ?? null;
+        $gw6 = $gatewayItems[$gw6Name] ?? null;
+        $items[] = [
+            'key' => (string)$key,
+            'interface' => $ifName,
+            'descr' => $descr !== '' ? $descr : strtoupper((string)$key),
+            'status' => (string)($rt['status'] ?? ''),
+            'mac' => (string)($rt['mac'] ?? ''),
+            'ipv4' => is_array($rt['ipv4'] ?? null) ? $rt['ipv4'] : [],
+            'ipv6' => is_array($rt['ipv6'] ?? null) ? $rt['ipv6'] : [],
+            'configured_ipv4' => trim(($iface['ipaddr'] ?? '') . (($iface['subnet'] ?? '') !== '' ? '/' . $iface['subnet'] : '')),
+            'configured_ipv6' => trim(($iface['ipaddrv6'] ?? '') . (($iface['subnetv6'] ?? '') !== '' ? '/' . $iface['subnetv6'] : '')),
+            'gateway_name' => $gwName,
+            'gateway_ip' => is_array($gw) ? (string)($gw['gateway'] ?? '') : '',
+            'gatewayv6_name' => $gw6Name,
+            'gatewayv6_ip' => is_array($gw6) ? (string)($gw6['gateway'] ?? '') : '',
+            'default_route' => isset($defaultIfs[$ifName]),
+            'enabled' => bool01($iface['enable'] ?? '1') === '1',
+        ];
+    }
+
+    if (!$items) {
+        $defaultIfsList = collect_default_route_interfaces();
+        foreach ($defaultIfsList as $ifName) {
+            $rt = $runtimeByName[$ifName] ?? [];
+            $items[] = [
+                'key' => '',
+                'interface' => $ifName,
+                'descr' => $ifName,
+                'status' => (string)($rt['status'] ?? ''),
+                'mac' => (string)($rt['mac'] ?? ''),
+                'ipv4' => is_array($rt['ipv4'] ?? null) ? $rt['ipv4'] : [],
+                'ipv6' => is_array($rt['ipv6'] ?? null) ? $rt['ipv6'] : [],
+                'configured_ipv4' => '',
+                'configured_ipv6' => '',
+                'gateway_name' => '',
+                'gateway_ip' => '',
+                'gatewayv6_name' => '',
+                'gatewayv6_ip' => '',
+                'default_route' => true,
+                'enabled' => true,
+            ];
+        }
+    }
+
+    return $items;
+}
+
 function collect_status(): array
 {
     $load = sys_getloadavg();
+    $wanInterfaces = collect_wan_interfaces();
+    $wireguard = null;
+    try {
+        $wireguard = wireguard_status_job();
+    } catch (Throwable $e) {
+        $wireguard = ['ok' => false, 'error' => $e->getMessage(), 'peers' => [], 'peer_count' => 0];
+    }
     return [
         'hostname' => gethostname() ?: null,
         'opnsense_version' => opnsense_version(),
@@ -334,11 +514,13 @@ function collect_status(): array
         'memory_used_percent' => memory_used_percent(),
         'disk_used_percent' => disk_used_percent(),
         'uptime_seconds' => uptime_seconds(),
-        'wan_ip' => wan_ip(),
+        'wan_ip' => first_wan_ipv4($wanInterfaces) ?: wan_ip(),
+        'wan_interfaces' => $wanInterfaces,
         'dns_servers' => collect_dns_servers(),
         'interfaces' => collect_interfaces(),
         'gateways' => collect_gateways(),
         'plugins' => collect_plugins(),
+        'wireguard' => $wireguard,
     ];
 }
 
@@ -732,14 +914,24 @@ function restore_config_job(array $config, array $payload, int $jobId): array
     ];
 }
 
+function dom_name_key(string $name): string
+{
+    return strtolower(str_replace(['_', '-'], '', $name));
+}
+
 function dom_direct_child(DOMElement $node, array $names): ?DOMElement
 {
     $lookup = [];
     foreach ($names as $name) {
         $lookup[strtolower($name)] = true;
+        $lookup[dom_name_key($name)] = true;
     }
     foreach ($node->childNodes as $child) {
-        if ($child instanceof DOMElement && isset($lookup[strtolower($child->nodeName)])) {
+        if (!$child instanceof DOMElement) {
+            continue;
+        }
+        $nodeName = strtolower($child->nodeName);
+        if (isset($lookup[$nodeName]) || isset($lookup[dom_name_key($child->nodeName)])) {
             return $child;
         }
     }
@@ -792,6 +984,47 @@ function safe_peer_id(string $value): string
     return $value !== '' ? $value : 'peer';
 }
 
+function wg_split_list(string $value): array
+{
+    $parts = preg_split('/[\s,;]+/', trim($value), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    return array_values(array_unique(array_map('trim', $parts)));
+}
+
+function wg_endpoint_info(DOMElement $node): array
+{
+    $combined = dom_text($node, ['endpoint', 'serverendpoint', 'peerendpoint'], '');
+    $host = '';
+    $port = '';
+    if ($combined !== '') {
+        if (preg_match('/^\[([^\]]+)\]:(\d+)$/', $combined, $m)) {
+            $host = $m[1];
+            $port = $m[2];
+        } elseif (preg_match('/^([^:]+):(\d+)$/', $combined, $m)) {
+            $host = $m[1];
+            $port = $m[2];
+        } else {
+            $host = $combined;
+        }
+    }
+    $host = dom_text($node, ['serveraddress', 'server_address', 'server-address', 'endpointaddress', 'endpoint_address', 'endpoint-address', 'endpointhost', 'endpoint_host', 'endpoint-host'], $host);
+    $port = dom_text($node, ['serverport', 'server_port', 'server-port', 'endpointport', 'endpoint_port', 'endpoint-port'], $port);
+    $display = $host;
+    if ($host !== '' && $port !== '') {
+        $display = (strpos($host, ':') !== false && !str_starts_with($host, '[') ? '[' . $host . ']' : $host) . ':' . $port;
+    }
+    return ['host' => $host, 'port' => $port, 'display' => $display];
+}
+
+function wg_public_key(DOMElement $node): string
+{
+    return dom_text($node, ['publickey', 'public_key', 'public-key', 'pubkey', 'pub_key', 'pub-key'], '');
+}
+
+function wg_allowed_ips(DOMElement $node): string
+{
+    return dom_text($node, ['allowedips', 'allowed_ips', 'allowed-ips', 'allowedip', 'allowed_ip', 'allowed-ip', 'tunneladdress', 'tunnel_address', 'tunnel-address', 'tunneladdresses', 'tunnel_addresses', 'tunnel-addresses'], '');
+}
+
 function wg_peer_id(DOMElement $node, string $path): string
 {
     foreach (['uuid', 'id'] as $attr) {
@@ -799,26 +1032,66 @@ function wg_peer_id(DOMElement $node, string $path): string
             return safe_peer_id($node->getAttribute($attr));
         }
     }
-    $publicKey = dom_text($node, ['publickey', 'public_key', 'pubkey', 'pub_key'], '');
+    $childId = dom_text($node, ['uuid', 'id'], '');
+    if ($childId !== '') {
+        return safe_peer_id($childId);
+    }
+    $publicKey = wg_public_key($node);
     $name = dom_text($node, ['name', 'description', 'descr'], '');
     return 'peer_' . substr(sha1($path . '|' . $publicKey . '|' . $name), 0, 16);
 }
 
-function endpoint_display(DOMElement $node): string
+function wg_is_peer_candidate(DOMElement $node): bool
 {
-    $combined = dom_text($node, ['endpoint', 'serverendpoint', 'peerendpoint'], '');
-    if ($combined !== '') {
-        return $combined;
+    $tag = strtolower($node->nodeName);
+    $publicKey = wg_public_key($node);
+    $endpoint = wg_endpoint_info($node);
+    $allowed = wg_allowed_ips($node);
+    if ($publicKey === '' && $endpoint['display'] === '' && $allowed === '') {
+        return false;
     }
-    $host = dom_text($node, ['serveraddress', 'server_address', 'endpointaddress', 'endpoint_address', 'endpointhost', 'endpoint_host'], '');
-    $port = dom_text($node, ['serverport', 'server_port', 'endpointport', 'endpoint_port'], '');
-    if ($host !== '' && $port !== '') {
-        return (strpos($host, ':') !== false && !str_starts_with($host, '[') ? '[' . $host . ']' : $host) . ':' . $port;
+    if (str_contains($tag, 'peer') || str_contains($tag, 'client') || str_contains($tag, 'endpoint')) {
+        return true;
     }
-    return $host;
+    return $publicKey !== '' && ($endpoint['display'] !== '' || $allowed !== '');
 }
 
-function collect_wg_config_peers(): array
+function wg_collect_peer_nodes(DOMElement $node, array &$result): void
+{
+    if (wg_is_peer_candidate($node)) {
+        $path = dom_node_path($node);
+        $peerId = wg_peer_id($node, $path);
+        if (!isset($result[$peerId])) {
+            $endpoint = wg_endpoint_info($node);
+            $enabledRaw = dom_text($node, ['enabled'], '1');
+            $publicKey = wg_public_key($node);
+            $name = dom_text($node, ['name', 'description', 'descr'], '');
+            $allowed = wg_allowed_ips($node);
+            $result[$peerId] = [
+                '_node' => $node,
+                'peer_id' => $peerId,
+                'name' => $name !== '' ? $name : $peerId,
+                'enabled' => bool01($enabledRaw) === '1',
+                'public_key' => $publicKey,
+                'public_key_short' => $publicKey !== '' ? substr($publicKey, 0, 8) . '...' . substr($publicKey, -6) : '',
+                'endpoint' => $endpoint['display'],
+                'endpoint_host' => $endpoint['host'],
+                'endpoint_port' => $endpoint['port'],
+                'allowed_ips' => wg_split_list($allowed),
+                'config_path' => $path,
+                'node_name' => $node->nodeName,
+            ];
+        }
+        return;
+    }
+    foreach ($node->childNodes as $child) {
+        if ($child instanceof DOMElement) {
+            wg_collect_peer_nodes($child, $result);
+        }
+    }
+}
+
+function collect_wg_config_peers_with_nodes(): array
 {
     $path = '/conf/config.xml';
     if (!is_readable($path)) {
@@ -826,67 +1099,69 @@ function collect_wg_config_peers(): array
     }
     $dom = new DOMDocument();
     $dom->preserveWhiteSpace = false;
+    libxml_use_internal_errors(true);
     if (!$dom->load($path)) {
         return [];
     }
-    $xpath = new DOMXPath($dom);
-    $nodes = $xpath->query('//*[publickey or public_key or pubkey or pub_key or serveraddress or endpoint or tunneladdress or allowedips]');
     $peers = [];
-    foreach ($nodes ?: [] as $node) {
-        if (!$node instanceof DOMElement) {
-            continue;
+    $wireguardNodes = $dom->getElementsByTagName('wireguard');
+    if ($wireguardNodes->length > 0) {
+        foreach ($wireguardNodes as $wireguard) {
+            if ($wireguard instanceof DOMElement) {
+                wg_collect_peer_nodes($wireguard, $peers);
+            }
         }
-        $tag = strtolower($node->nodeName);
-        $publicKey = dom_text($node, ['publickey', 'public_key', 'pubkey', 'pub_key'], '');
-        $endpoint = endpoint_display($node);
-        $allowed = dom_text($node, ['allowedips', 'allowed_ips', 'tunneladdress', 'tunnel_address'], '');
-        if ($publicKey === '' && $endpoint === '' && $allowed === '') {
-            continue;
-        }
-        if (!str_contains($tag, 'peer') && !str_contains($tag, 'client') && $publicKey === '') {
-            continue;
-        }
-        $nodePath = dom_node_path($node);
-        $enabledRaw = dom_text($node, ['enabled'], '1');
-        $name = dom_text($node, ['name', 'description', 'descr'], '');
-        $peerId = wg_peer_id($node, $nodePath);
-        $peers[$peerId] = [
-            'peer_id' => $peerId,
-            'name' => $name !== '' ? $name : $peerId,
-            'enabled' => bool01($enabledRaw) === '1',
-            'public_key' => $publicKey,
-            'endpoint' => $endpoint,
-            'allowed_ips' => $allowed !== '' ? preg_split('/[\s,;]+/', $allowed, -1, PREG_SPLIT_NO_EMPTY) : [],
-            'config_path' => $nodePath,
-        ];
+    } elseif ($dom->documentElement instanceof DOMElement) {
+        wg_collect_peer_nodes($dom->documentElement, $peers);
     }
+    return $peers;
+}
+
+function collect_wg_config_peers(): array
+{
+    $peers = collect_wg_config_peers_with_nodes();
+    foreach ($peers as &$peer) {
+        unset($peer['_node']);
+    }
+    unset($peer);
     return array_values($peers);
+}
+
+function wg_binary(): string
+{
+    foreach (['/usr/local/bin/wg', '/usr/bin/wg', '/bin/wg'] as $path) {
+        if (is_executable($path)) {
+            return $path;
+        }
+    }
+    $found = trim((string)(shell_exec('command -v wg 2>/dev/null') ?: ''));
+    return $found !== '' ? $found : 'wg';
 }
 
 function wg_dump_peers(): array
 {
-    $cmd = 'wg show all dump';
+    $cmd = escapeshellcmd(wg_binary()) . ' show all dump';
     $lines = shell_lines($cmd);
     $map = [];
     foreach ($lines as $line) {
         $p = explode("\t", $line);
-        if (count($p) < 8) {
+        if (count($p) < 9) {
             continue;
         }
-        // Peer line: interface, public-key, preshared-key, endpoint, allowed-ips, latest-handshake, rx, tx, keepalive
-        if (count($p) >= 9 && $p[0] !== '' && $p[1] !== '' && $p[2] !== '') {
-            $publicKey = $p[1];
-            $ts = ctype_digit($p[5]) ? (int)$p[5] : 0;
-            $map[$publicKey] = [
-                'interface' => $p[0],
-                'endpoint_runtime' => $p[3],
-                'allowed_ips_runtime' => $p[4],
-                'latest_handshake_ts' => $ts,
-                'latest_handshake' => $ts > 0 ? date('Y-m-d H:i:s', $ts) : '',
-                'transfer_rx' => ctype_digit($p[6]) ? (int)$p[6] : 0,
-                'transfer_tx' => ctype_digit($p[7]) ? (int)$p[7] : 0,
-            ];
+        $publicKey = $p[1] ?? '';
+        if ($publicKey === '' || $publicKey === '(none)') {
+            continue;
         }
+        $ts = ctype_digit((string)$p[5]) ? (int)$p[5] : 0;
+        $map[$publicKey] = [
+            'interface' => $p[0] ?? '',
+            'endpoint_runtime' => $p[3] ?? '',
+            'allowed_ips_runtime' => $p[4] ?? '',
+            'latest_handshake_ts' => $ts,
+            'latest_handshake' => $ts > 0 ? date('Y-m-d H:i:s', $ts) : '',
+            'transfer_rx' => ctype_digit((string)($p[6] ?? '')) ? (int)$p[6] : 0,
+            'transfer_tx' => ctype_digit((string)($p[7] ?? '')) ? (int)$p[7] : 0,
+        ];
     }
     return $map;
 }
@@ -896,21 +1171,52 @@ function wireguard_status_job(): array
     $peers = collect_wg_config_peers();
     $runtime = wg_dump_peers();
     $now = time();
+    $seenRuntime = [];
     foreach ($peers as &$peer) {
         $pub = (string)($peer['public_key'] ?? '');
         if ($pub !== '' && isset($runtime[$pub])) {
             $peer = array_merge($peer, $runtime[$pub]);
+            $seenRuntime[$pub] = true;
+        }
+        if (($peer['endpoint'] ?? '') === '' && ($peer['endpoint_runtime'] ?? '') !== '') {
+            $peer['endpoint'] = $peer['endpoint_runtime'];
+        }
+        if (!$peer['allowed_ips'] && ($peer['allowed_ips_runtime'] ?? '') !== '') {
+            $peer['allowed_ips'] = wg_split_list((string)$peer['allowed_ips_runtime']);
         }
         $ts = (int)($peer['latest_handshake_ts'] ?? 0);
         $peer['stale'] = !empty($peer['enabled']) && ($ts === 0 || ($now - $ts) > 1800);
     }
     unset($peer);
+
+    foreach ($runtime as $publicKey => $rt) {
+        if (isset($seenRuntime[$publicKey])) {
+            continue;
+        }
+        $peerId = 'runtime_' . substr(sha1($publicKey), 0, 16);
+        $ts = (int)($rt['latest_handshake_ts'] ?? 0);
+        $peers[] = array_merge([
+            'peer_id' => $peerId,
+            'name' => ($rt['interface'] ?? 'wg') . ' ' . substr($publicKey, 0, 8) . '...' . substr($publicKey, -6),
+            'enabled' => true,
+            'public_key' => $publicKey,
+            'public_key_short' => substr($publicKey, 0, 8) . '...' . substr($publicKey, -6),
+            'endpoint' => $rt['endpoint_runtime'] ?? '',
+            'allowed_ips' => wg_split_list((string)($rt['allowed_ips_runtime'] ?? '')),
+            'config_path' => '',
+            'node_name' => 'runtime',
+        ], $rt, [
+            'stale' => $ts === 0 || ($now - $ts) > 1800,
+        ]);
+    }
+
+    usort($peers, static fn($a, $b): int => strnatcasecmp((string)($a['name'] ?? ''), (string)($b['name'] ?? '')));
     return [
         'ok' => true,
         'collected_at' => date(DATE_ATOM),
         'peer_count' => count($peers),
         'peers' => $peers,
-        'wg_available' => trim((string)(shell_exec('command -v wg 2>/dev/null') ?: '')) !== '',
+        'wg_available' => trim((string)(shell_exec('command -v wg 2>/dev/null') ?: '')) !== '' || is_executable('/usr/local/bin/wg'),
     ];
 }
 
@@ -918,29 +1224,29 @@ function wireguard_set_peer_enabled_job(array $payload): array
 {
     $peerId = safe_peer_id((string)($payload['peer_id'] ?? ''));
     $enabled = bool01($payload['enabled'] ?? '1');
-    if ($peerId === '' || $peerId === 'peer') {
-        throw new RuntimeException('peer_id is required');
+    if ($peerId === '' || $peerId === 'peer' || str_starts_with($peerId, 'runtime_')) {
+        throw new RuntimeException('Config peer_id is required');
     }
     $path = '/conf/config.xml';
     $dom = new DOMDocument();
     $dom->preserveWhiteSpace = false;
     $dom->formatOutput = true;
+    libxml_use_internal_errors(true);
     if (!$dom->load($path)) {
         throw new RuntimeException('Cannot parse config.xml');
     }
-    $xpath = new DOMXPath($dom);
-    $nodes = $xpath->query('//*[publickey or public_key or pubkey or pub_key or serveraddress or endpoint or tunneladdress or allowedips]');
-    $target = null;
-    foreach ($nodes ?: [] as $node) {
-        if (!$node instanceof DOMElement) {
-            continue;
+    $peers = [];
+    $wireguardNodes = $dom->getElementsByTagName('wireguard');
+    if ($wireguardNodes->length > 0) {
+        foreach ($wireguardNodes as $wireguard) {
+            if ($wireguard instanceof DOMElement) {
+                wg_collect_peer_nodes($wireguard, $peers);
+            }
         }
-        $id = wg_peer_id($node, dom_node_path($node));
-        if ($id === $peerId) {
-            $target = $node;
-            break;
-        }
+    } elseif ($dom->documentElement instanceof DOMElement) {
+        wg_collect_peer_nodes($dom->documentElement, $peers);
     }
+    $target = isset($peers[$peerId]) && ($peers[$peerId]['_node'] ?? null) instanceof DOMElement ? $peers[$peerId]['_node'] : null;
     if (!$target instanceof DOMElement) {
         throw new RuntimeException('WireGuard peer not found: ' . $peerId);
     }
@@ -960,12 +1266,12 @@ function wireguard_set_peer_enabled_job(array $payload): array
     }
     $reload = [];
     if (is_executable('/usr/local/sbin/configctl')) {
-        $reload[] = run_command_capture('/usr/local/sbin/configctl wireguard reload');
-        $reload[] = run_command_capture('/usr/local/sbin/configctl filter reload');
+        foreach (['/usr/local/sbin/configctl wireguard reload', '/usr/local/sbin/configctl wireguard restart', '/usr/local/sbin/configctl filter reload'] as $cmd) {
+            $reload[] = run_command_capture($cmd);
+        }
     }
     return ['ok' => true, 'peer_id' => $peerId, 'enabled' => $enabled, 'local_backup' => $localBackup, 'reload' => $reload];
 }
-
 
 function controller_uuid_v4(): string
 {
