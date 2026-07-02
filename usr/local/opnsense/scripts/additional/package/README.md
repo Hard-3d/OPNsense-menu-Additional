@@ -1,27 +1,41 @@
-# OPNsense Additional menu v0.1.51
+# OPNsense Additional menu v0.1.52
 
-Версия меню для работы с OPNsense Central Controller.
+Дополнительное меню для OPNsense с модулем подключения к OPNsense Central Controller.
 
-## Новое в v0.1.51
+## Новое в v0.1.52
 
-- Агент теперь умеет выполнять задание `alias.apply`.
-- `alias.apply` создаёт или обновляет Firewall Alias в `/conf/config.xml`.
-- Поддержаны типы:
-  - `urljson` — URL Table in JSON format.
-  - `urltable` — URL Table.
-- Перед изменением создаётся backup:
-  - `/conf/config.xml.controller_alias_YYYYmmdd_HHMMSS.bak`
-- После изменения выполняется обновление firewall aliases через `configctl filter refresh_aliases` с fallback на `update_tables.py`.
+- Агент `controller-agent.php` теперь умеет применять aliases типов:
+  - `urljson`;
+  - `urltable`;
+  - `host` — Host(s): IP / FQDN;
+  - `network` — Network(s): IP / CIDR.
+- Для `host` и `network` агент принимает прямой список значений в payload `content`.
+- Перед изменением `/conf/config.xml` создаётся backup:
 
-## Подключение к центральному серверу
+```text
+/conf/config.xml.controller_alias_YYYYmmdd_HHMMSS.bak
+```
 
-Меню:
+Центральный сервер для полного функционала должен быть версии `v0.1.2` или новее.
+
+## Установка
+
+```sh
+cd /
+fetch -o /tmp/opnsense-additional-menu-v0.1.52-root.zip "URL_К_АРХИВУ"
+unzip -o /tmp/opnsense-additional-menu-v0.1.52-root.zip -d /
+chmod +x /install.sh
+/install.sh
+configctl webgui restart
+```
+
+## Подключение
 
 ```text
 Дополнительно -> Controller connect
 ```
 
-Заполнить:
+Указать:
 
 ```text
 Central server URL
@@ -29,14 +43,4 @@ Device UUID
 Registration token
 ```
 
-После регистрации включить задачу:
-
-```text
-Дополнительно -> Scheduler -> Controller agent
-```
-
-Интервал: 1 минута.
-
-## Важно
-
-Центральный сервер для alias.apply должен быть версии `v0.1.1` или новее.
+После регистрации можно нажать `Run once`, затем включить задачу `Controller agent` в Additional Scheduler.

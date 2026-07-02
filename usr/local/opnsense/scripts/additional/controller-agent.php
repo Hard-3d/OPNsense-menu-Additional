@@ -407,11 +407,52 @@ function refresh_firewall_aliases(): array
     return ['status' => 'skipped', 'message' => 'No successful alias refresh command', 'attempts' => $attempts];
 }
 
+function split_alias_items(string $content): array
+{
+    $items = preg_split('/[\s,;]+/u', trim($content), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    return array_values(array_unique(array_map('trim', $items)));
+}
+
+function valid_alias_item(string $item, string $type): bool
+{
+    if ($item === '' || preg_match('/[\s"\'<>]/', $item)) {
+        return false;
+    }
+    if ($type === 'host') {
+        if (filter_var($item, FILTER_VALIDATE_IP)) {
+            return true;
+        }
+        $host = str_starts_with($item, '*.') ? substr($item, 2) : $item;
+        return (bool)preg_match('/^(?=.{1,253}$)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/', $host);
+    }
+    if ($type === 'network') {
+        if (filter_var($item, FILTER_VALIDATE_IP)) {
+            return true;
+        }
+        if (strpos($item, '/') === false) {
+            return false;
+        }
+        [$ip, $prefix] = explode('/', $item, 2);
+        if (!ctype_digit($prefix)) {
+            return false;
+        }
+        $p = (int)$prefix;
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return $p >= 0 && $p <= 32;
+        }
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            return $p >= 0 && $p <= 128;
+        }
+    }
+    return false;
+}
+
 function apply_alias_job(array $payload): array
 {
     $name = trim((string)($payload['name'] ?? ''));
     $type = trim((string)($payload['alias_type'] ?? $payload['type'] ?? 'urljson'));
-    $sourceUrl = trim((string)($payload['source_url'] ?? $payload['content'] ?? ''));
+    $content = trim((string)($payload['content'] ?? ''));
+    $sourceUrl = trim((string)($payload['source_url'] ?? ''));
     $pathExpression = trim((string)($payload['path_expression'] ?? ''));
     $description = trim((string)($payload['description'] ?? 'Managed by OPNsense Central Controller'));
     $updatefreq = trim((string)($payload['updatefreq'] ?? '1'));
@@ -420,18 +461,45 @@ function apply_alias_job(array $payload): array
     if (!preg_match('/^[A-Za-z][A-Za-z0-9_]{0,63}$/', $name)) {
         throw new RuntimeException('Invalid alias name: ' . $name);
     }
-    if (!in_array($type, ['urljson', 'urltable'], true)) {
+    if (!in_array($type, ['urljson', 'urltable', 'host', 'network'], true)) {
         throw new RuntimeException('Unsupported alias type: ' . $type);
     }
-    if ($sourceUrl === '' || !preg_match('#^https?://#i', $sourceUrl)) {
-        throw new RuntimeException('Invalid alias source URL');
+
+    if (in_array($type, ['urljson', 'urltable'], true)) {
+        if ($content === '') {
+            $content = $sourceUrl;
+        }
+        if ($content === '' || !preg_match('#^https?://#i', $content)) {
+            throw new RuntimeException('Invalid alias source URL');
+        }
+        if ($type === 'urljson' && $pathExpression === '') {
+            throw new RuntimeException('Path expression is required for urljson alias');
+        }
+        if ($updatefreq === '') {
+            $updatefreq = '1';
+        }
+        if (!preg_match('/^[0-9]+$/', $updatefreq)) {
+            throw new RuntimeException('Invalid updatefreq: ' . $updatefreq);
+        }
+    } else {
+        $items = split_alias_items($content);
+        if (!$items) {
+            throw new RuntimeException('Alias content is empty');
+        }
+        $bad = [];
+        foreach ($items as $item) {
+            if (!valid_alias_item($item, $type)) {
+                $bad[] = $item;
+            }
+        }
+        if ($bad) {
+            throw new RuntimeException('Invalid alias items: ' . implode(', ', array_slice($bad, 0, 10)));
+        }
+        $content = implode("\n", $items);
+        $pathExpression = '';
+        $updatefreq = '';
     }
-    if ($type === 'urljson' && $pathExpression === '') {
-        throw new RuntimeException('Path expression is required for urljson alias');
-    }
-    if ($updatefreq !== '' && !preg_match('/^[0-9]+$/', $updatefreq)) {
-        throw new RuntimeException('Invalid updatefreq: ' . $updatefreq);
-    }
+
     if ($proto !== '' && !in_array($proto, ['IPv4', 'IPv6', 'IPv4,IPv6', 'IPv6,IPv4'], true)) {
         throw new RuntimeException('Invalid proto: ' . $proto);
     }
@@ -478,8 +546,8 @@ function apply_alias_job(array $payload): array
     xml_set_child($entry, 'path_expression', $type === 'urljson' ? $pathExpression : '');
     xml_set_child($entry, 'proto', $proto);
     xml_set_child($entry, 'counters', (string)($payload['counters'] ?? '0'));
-    xml_set_child($entry, 'updatefreq', $updatefreq === '' ? '1' : $updatefreq);
-    xml_set_child($entry, 'content', $sourceUrl);
+    xml_set_child($entry, 'updatefreq', in_array($type, ['urljson', 'urltable'], true) ? ($updatefreq === '' ? '1' : $updatefreq) : '');
+    xml_set_child($entry, 'content', $content);
     xml_set_child($entry, 'description', $description);
 
     $tmpPath = $configPath . '.controller_alias_tmp';
@@ -499,6 +567,7 @@ function apply_alias_job(array $payload): array
         'name' => $name,
         'type' => $type,
         'created' => $created,
+        'item_count' => in_array($type, ['host', 'network'], true) ? count(split_alias_items($content)) : null,
         'config_backup' => $backupPath,
         'refresh' => $refresh,
     ];
