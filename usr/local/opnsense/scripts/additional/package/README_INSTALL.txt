@@ -1,38 +1,8 @@
-OPNsense Additional Menu v0.1.49
+OPNsense Additional Menu v0.1.53
 
-Установка:
 cd /
-unzip -o /root/opnsense-additional-menu-v0.1.49-root.zip
-chmod 755 /install.sh
+fetch -o /tmp/opnsense-additional-menu-v0.1.53-root.zip "URL_К_АРХИВУ"
+unzip -o /tmp/opnsense-additional-menu-v0.1.53-root.zip -d /
+chmod +x /install.sh
 /install.sh
-
-После установки:
-Logout -> Login
-
-Меню:
-Дополнительно
-- Ethname
-- GeoIP update
-- Check VPN status
-- Check WAN
-- udp2raw
-- Scheduler
-- Update
-
-Для GitHub:
-- распакуйте архив в локальную папку репозитория;
-- сделайте git add/commit/push;
-- создайте Release v0.1.49;
-- загрузите этот же root ZIP как release asset.
-
-
-## Root cleanup
-
-После установки служебные файлы `install.sh`, `README.md`, `README_INSTALL.txt`, `.gitignore` удаляются из корня `/` и сохраняются в `/usr/local/opnsense/scripts/additional/package/`.
-
-После выполнения install.sh служебные файлы будут перенесены в `/usr/local/opnsense/scripts/additional/package/` и удалены из корня `/`.
-
-GeoIP update:
-- используется только MMDB;
-- можно указать до 3 прямых URL .mmdb;
-- если первый источник недоступен, будет использован следующий.
+configctl webgui restart

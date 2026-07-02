@@ -285,7 +285,7 @@ function release_version_from_github(array $data): string
 
     /*
      * GitHub позволяет назвать tag как угодно, например "Beta",
-     * а версию указать в имени release: "v0.1.2".
+     * а версию указать в имени release: "v0.1.3".
      * Для сравнения версий используем нормальный semver-подобный release name,
      * если tag не похож на версию.
      */

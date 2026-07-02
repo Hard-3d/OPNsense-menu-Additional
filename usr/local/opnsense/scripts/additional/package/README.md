@@ -1,46 +1,29 @@
-# OPNsense Additional menu v0.1.52
+# OPNsense Additional Menu v0.1.53
 
-Дополнительное меню для OPNsense с модулем подключения к OPNsense Central Controller.
+Версия для работы с OPNsense Central Controller v0.1.3.
 
-## Новое в v0.1.52
+Добавлено в агент Controller connect:
 
-- Агент `controller-agent.php` теперь умеет применять aliases типов:
-  - `urljson`;
-  - `urltable`;
-  - `host` — Host(s): IP / FQDN;
-  - `network` — Network(s): IP / CIDR.
-- Для `host` и `network` агент принимает прямой список значений в payload `content`.
-- Перед изменением `/conf/config.xml` создаётся backup:
+- расширенный `status.collect` / `system.info`;
+- `config.restore` для rollback config.xml;
+- локальный backup перед rollback;
+- центральный backup текущей конфигурации перед rollback;
+- `wireguard.status`;
+- `wireguard.peer.set_enabled`;
+- возврат статуса WireGuard peers в центральную панель.
 
-```text
-/conf/config.xml.controller_alias_YYYYmmdd_HHMMSS.bak
-```
-
-Центральный сервер для полного функционала должен быть версии `v0.1.2` или новее.
-
-## Установка
+Установка:
 
 ```sh
 cd /
-fetch -o /tmp/opnsense-additional-menu-v0.1.52-root.zip "URL_К_АРХИВУ"
-unzip -o /tmp/opnsense-additional-menu-v0.1.52-root.zip -d /
+fetch -o /tmp/opnsense-additional-menu-v0.1.53-root.zip "URL_К_АРХИВУ"
+unzip -o /tmp/opnsense-additional-menu-v0.1.53-root.zip -d /
 chmod +x /install.sh
 /install.sh
 configctl webgui restart
 ```
 
-## Подключение
+После обновления проверь:
 
-```text
-Дополнительно -> Controller connect
-```
-
-Указать:
-
-```text
-Central server URL
-Device UUID
-Registration token
-```
-
-После регистрации можно нажать `Run once`, затем включить задачу `Controller agent` в Additional Scheduler.
+- Дополнительно -> Controller connect -> Run once.
+- В центральной панели создай задания `system.info`, `wireguard.status`, `config.backup`.

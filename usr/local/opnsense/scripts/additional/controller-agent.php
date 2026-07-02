@@ -241,17 +241,104 @@ function wan_ip(): ?string
     return shell_one("route -n get default | awk '/interface:/ {print $2}' | xargs -I{} ifconfig {} | awk '/inet / {print $2; exit}'") ?: null;
 }
 
+function shell_lines(string $cmd): array
+{
+    $out = shell_exec($cmd . ' 2>/dev/null');
+    if ($out === null || trim($out) === '') {
+        return [];
+    }
+    return array_values(array_filter(array_map('trim', preg_split('/\R/', trim($out)) ?: []), static fn($v): bool => $v !== ''));
+}
+
+function freebsd_version(): ?string
+{
+    return shell_one('freebsd-version') ?: php_uname('r');
+}
+
+function collect_dns_servers(): array
+{
+    $lines = is_readable('/etc/resolv.conf') ? file('/etc/resolv.conf', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+    $servers = [];
+    foreach ($lines ?: [] as $line) {
+        if (preg_match('/^\s*nameserver\s+([^\s#]+)/', $line, $m)) {
+            $servers[] = $m[1];
+        }
+    }
+    return array_values(array_unique($servers));
+}
+
+function collect_interfaces(): array
+{
+    $names = shell_lines('ifconfig -l');
+    if (count($names) === 1 && strpos($names[0], ' ') !== false) {
+        $names = preg_split('/\s+/', $names[0], -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    }
+    $items = [];
+    foreach ($names as $name) {
+        if ($name === 'lo0' || $name === '') {
+            continue;
+        }
+        $raw = shell_exec('ifconfig ' . escapeshellarg($name) . ' 2>/dev/null') ?: '';
+        $ipv4 = [];
+        $ipv6 = [];
+        if (preg_match_all('/\sinet\s+([^\s]+)/', $raw, $m)) {
+            $ipv4 = $m[1];
+        }
+        if (preg_match_all('/\sinet6\s+([^\s%]+)/', $raw, $m)) {
+            $ipv6 = array_values(array_filter($m[1], static fn($ip): bool => $ip !== '::1'));
+        }
+        preg_match('/ether\s+([^\s]+)/', $raw, $mac);
+        $items[] = [
+            'name' => $name,
+            'status' => str_contains($raw, 'status: active') ? 'active' : (preg_match('/status:\s*([^\n]+)/', $raw, $sm) ? trim($sm[1]) : ''),
+            'mac' => $mac[1] ?? '',
+            'ipv4' => $ipv4,
+            'ipv6' => $ipv6,
+        ];
+    }
+    return $items;
+}
+
+function collect_gateways(): array
+{
+    $lines = shell_lines("netstat -rn -f inet | awk 'NR>4 {print $1 \" \" $2 \" \" $4 \" \" $6}'");
+    $items = [];
+    foreach ($lines as $line) {
+        $parts = preg_split('/\s+/', $line);
+        if (!$parts || count($parts) < 2) {
+            continue;
+        }
+        if ($parts[0] === 'default' || str_starts_with($parts[0], '0.0.0.0')) {
+            $items[] = ['destination' => $parts[0], 'gateway' => $parts[1] ?? '', 'flags' => $parts[2] ?? '', 'interface' => $parts[3] ?? ''];
+        }
+    }
+    return $items;
+}
+
+function collect_plugins(): array
+{
+    $lines = shell_lines("pkg info -x '^os-' | awk '{print $1}'");
+    return $lines;
+}
+
 function collect_status(): array
 {
     $load = sys_getloadavg();
     return [
         'hostname' => gethostname() ?: null,
         'opnsense_version' => opnsense_version(),
+        'freebsd_version' => freebsd_version(),
         'cpu_load' => isset($load[0]) ? round((float)$load[0], 2) : null,
+        'cpu_load_5' => isset($load[1]) ? round((float)$load[1], 2) : null,
+        'cpu_load_15' => isset($load[2]) ? round((float)$load[2], 2) : null,
         'memory_used_percent' => memory_used_percent(),
         'disk_used_percent' => disk_used_percent(),
         'uptime_seconds' => uptime_seconds(),
         'wan_ip' => wan_ip(),
+        'dns_servers' => collect_dns_servers(),
+        'interfaces' => collect_interfaces(),
+        'gateways' => collect_gateways(),
+        'plugins' => collect_plugins(),
     ];
 }
 
@@ -319,7 +406,7 @@ function do_heartbeat(array $config): array
     return ['status' => 'ok', 'message' => 'Heartbeat sent', 'status_payload' => $status, 'response' => $resp];
 }
 
-function do_backup(array $config): array
+function do_backup(array $config, string $backupType = 'agent', string $comment = 'Additional menu backup', ?int $sourceJobId = null): array
 {
     require_registered($config);
     $path = '/conf/config.xml';
@@ -330,7 +417,10 @@ function do_backup(array $config): array
     $content = (string)file_get_contents($path);
     $resp = http_json('POST', $server . '/api/agent/backup', [
         'content_base64' => base64_encode($content),
-        'comment' => 'Additional menu backup',
+        'comment' => $comment,
+        'backup_type' => $backupType,
+        'original_filename' => 'config.xml',
+        'source_job_id' => $sourceJobId,
     ], auth_headers($config), bool01($config['verify_tls'] ?? '1') === '1');
     write_status(['ok' => true, 'last_action' => 'backup', 'message' => 'Backup uploaded', 'response' => $resp]);
     return ['status' => 'ok', 'message' => 'Backup uploaded', 'response' => $resp];
@@ -573,6 +663,309 @@ function apply_alias_job(array $payload): array
     ];
 }
 
+
+function validate_xml_string(string $content): void
+{
+    libxml_use_internal_errors(true);
+    $xml = simplexml_load_string($content);
+    if (!$xml instanceof SimpleXMLElement) {
+        $errors = array_map(static fn($e) => trim($e->message), libxml_get_errors());
+        throw new RuntimeException('Invalid XML: ' . implode('; ', $errors));
+    }
+}
+
+function restore_config_job(array $config, array $payload, int $jobId): array
+{
+    $contentBase64 = (string)($payload['content_base64'] ?? '');
+    if ($contentBase64 === '') {
+        throw new RuntimeException('content_base64 is required');
+    }
+    $content = base64_decode($contentBase64, true);
+    if ($content === false) {
+        throw new RuntimeException('Invalid base64 restore payload');
+    }
+    $expectedSha = trim((string)($payload['backup_sha256'] ?? ''));
+    $actualSha = hash('sha256', $content);
+    if ($expectedSha !== '' && !hash_equals($expectedSha, $actualSha)) {
+        throw new RuntimeException('Backup sha256 mismatch');
+    }
+    validate_xml_string($content);
+
+    $configPath = '/conf/config.xml';
+    if (!is_readable($configPath) || !is_writable($configPath)) {
+        throw new RuntimeException('Cannot read/write ' . $configPath);
+    }
+
+    // Send a central backup of the current state before replacing config.xml.
+    try {
+        do_backup($config, 'before_restore', 'Automatic backup before config.restore job #' . $jobId, $jobId);
+    } catch (Throwable $e) {
+        // Keep going only after local backup succeeds below. Central upload failure should not block emergency rollback.
+    }
+
+    $localBackup = '/conf/config.xml.controller_restore_before_' . date('Ymd_His') . '.bak';
+    if (!copy($configPath, $localBackup)) {
+        throw new RuntimeException('Cannot create local pre-restore backup ' . $localBackup);
+    }
+
+    $tmpPath = $configPath . '.controller_restore_tmp';
+    if (file_put_contents($tmpPath, $content, LOCK_EX) === false) {
+        throw new RuntimeException('Cannot write temporary restore config');
+    }
+    chmod($tmpPath, 0600);
+    validate_xml_string((string)file_get_contents($tmpPath));
+    if (!rename($tmpPath, $configPath)) {
+        @unlink($tmpPath);
+        throw new RuntimeException('Cannot replace ' . $configPath);
+    }
+
+    $reload = [];
+    if (is_executable('/usr/local/sbin/configctl')) {
+        $reload[] = run_command_capture('/usr/local/sbin/configctl filter reload');
+    }
+    return [
+        'ok' => true,
+        'restored_backup_id' => $payload['backup_id'] ?? null,
+        'sha256' => $actualSha,
+        'local_pre_restore_backup' => $localBackup,
+        'reload' => $reload,
+    ];
+}
+
+function dom_direct_child(DOMElement $node, array $names): ?DOMElement
+{
+    $lookup = [];
+    foreach ($names as $name) {
+        $lookup[strtolower($name)] = true;
+    }
+    foreach ($node->childNodes as $child) {
+        if ($child instanceof DOMElement && isset($lookup[strtolower($child->nodeName)])) {
+            return $child;
+        }
+    }
+    return null;
+}
+
+function dom_text(DOMElement $node, array $names, string $default = ''): string
+{
+    $child = dom_direct_child($node, $names);
+    return $child instanceof DOMElement ? trim((string)$child->textContent) : $default;
+}
+
+function dom_set_text(DOMElement $node, string $name, string $value): void
+{
+    $child = dom_direct_child($node, [$name]);
+    if (!$child instanceof DOMElement) {
+        $child = $node->ownerDocument->createElement($name);
+        $node->appendChild($child);
+    }
+    while ($child->firstChild) {
+        $child->removeChild($child->firstChild);
+    }
+    $child->appendChild($node->ownerDocument->createTextNode($value));
+}
+
+function dom_node_path(DOMElement $node): string
+{
+    $parts = [];
+    $current = $node;
+    while ($current instanceof DOMElement) {
+        $index = 1;
+        $sibling = $current->previousSibling;
+        while ($sibling !== null) {
+            if ($sibling instanceof DOMElement && $sibling->nodeName === $current->nodeName) {
+                $index++;
+            }
+            $sibling = $sibling->previousSibling;
+        }
+        array_unshift($parts, $current->nodeName . '[' . $index . ']');
+        $current = $current->parentNode instanceof DOMElement ? $current->parentNode : null;
+    }
+    return '/' . implode('/', $parts);
+}
+
+function safe_peer_id(string $value): string
+{
+    $value = strtolower(trim($value));
+    $value = preg_replace('/[^a-z0-9_.-]+/', '_', $value);
+    $value = trim((string)$value, '_');
+    return $value !== '' ? $value : 'peer';
+}
+
+function wg_peer_id(DOMElement $node, string $path): string
+{
+    foreach (['uuid', 'id'] as $attr) {
+        if ($node->hasAttribute($attr) && trim($node->getAttribute($attr)) !== '') {
+            return safe_peer_id($node->getAttribute($attr));
+        }
+    }
+    $publicKey = dom_text($node, ['publickey', 'public_key', 'pubkey', 'pub_key'], '');
+    $name = dom_text($node, ['name', 'description', 'descr'], '');
+    return 'peer_' . substr(sha1($path . '|' . $publicKey . '|' . $name), 0, 16);
+}
+
+function endpoint_display(DOMElement $node): string
+{
+    $combined = dom_text($node, ['endpoint', 'serverendpoint', 'peerendpoint'], '');
+    if ($combined !== '') {
+        return $combined;
+    }
+    $host = dom_text($node, ['serveraddress', 'server_address', 'endpointaddress', 'endpoint_address', 'endpointhost', 'endpoint_host'], '');
+    $port = dom_text($node, ['serverport', 'server_port', 'endpointport', 'endpoint_port'], '');
+    if ($host !== '' && $port !== '') {
+        return (strpos($host, ':') !== false && !str_starts_with($host, '[') ? '[' . $host . ']' : $host) . ':' . $port;
+    }
+    return $host;
+}
+
+function collect_wg_config_peers(): array
+{
+    $path = '/conf/config.xml';
+    if (!is_readable($path)) {
+        return [];
+    }
+    $dom = new DOMDocument();
+    $dom->preserveWhiteSpace = false;
+    if (!$dom->load($path)) {
+        return [];
+    }
+    $xpath = new DOMXPath($dom);
+    $nodes = $xpath->query('//*[publickey or public_key or pubkey or pub_key or serveraddress or endpoint or tunneladdress or allowedips]');
+    $peers = [];
+    foreach ($nodes ?: [] as $node) {
+        if (!$node instanceof DOMElement) {
+            continue;
+        }
+        $tag = strtolower($node->nodeName);
+        $publicKey = dom_text($node, ['publickey', 'public_key', 'pubkey', 'pub_key'], '');
+        $endpoint = endpoint_display($node);
+        $allowed = dom_text($node, ['allowedips', 'allowed_ips', 'tunneladdress', 'tunnel_address'], '');
+        if ($publicKey === '' && $endpoint === '' && $allowed === '') {
+            continue;
+        }
+        if (!str_contains($tag, 'peer') && !str_contains($tag, 'client') && $publicKey === '') {
+            continue;
+        }
+        $nodePath = dom_node_path($node);
+        $enabledRaw = dom_text($node, ['enabled'], '1');
+        $name = dom_text($node, ['name', 'description', 'descr'], '');
+        $peerId = wg_peer_id($node, $nodePath);
+        $peers[$peerId] = [
+            'peer_id' => $peerId,
+            'name' => $name !== '' ? $name : $peerId,
+            'enabled' => bool01($enabledRaw) === '1',
+            'public_key' => $publicKey,
+            'endpoint' => $endpoint,
+            'allowed_ips' => $allowed !== '' ? preg_split('/[\s,;]+/', $allowed, -1, PREG_SPLIT_NO_EMPTY) : [],
+            'config_path' => $nodePath,
+        ];
+    }
+    return array_values($peers);
+}
+
+function wg_dump_peers(): array
+{
+    $cmd = 'wg show all dump';
+    $lines = shell_lines($cmd);
+    $map = [];
+    foreach ($lines as $line) {
+        $p = explode("\t", $line);
+        if (count($p) < 8) {
+            continue;
+        }
+        // Peer line: interface, public-key, preshared-key, endpoint, allowed-ips, latest-handshake, rx, tx, keepalive
+        if (count($p) >= 9 && $p[0] !== '' && $p[1] !== '' && $p[2] !== '') {
+            $publicKey = $p[1];
+            $ts = ctype_digit($p[5]) ? (int)$p[5] : 0;
+            $map[$publicKey] = [
+                'interface' => $p[0],
+                'endpoint_runtime' => $p[3],
+                'allowed_ips_runtime' => $p[4],
+                'latest_handshake_ts' => $ts,
+                'latest_handshake' => $ts > 0 ? date('Y-m-d H:i:s', $ts) : '',
+                'transfer_rx' => ctype_digit($p[6]) ? (int)$p[6] : 0,
+                'transfer_tx' => ctype_digit($p[7]) ? (int)$p[7] : 0,
+            ];
+        }
+    }
+    return $map;
+}
+
+function wireguard_status_job(): array
+{
+    $peers = collect_wg_config_peers();
+    $runtime = wg_dump_peers();
+    $now = time();
+    foreach ($peers as &$peer) {
+        $pub = (string)($peer['public_key'] ?? '');
+        if ($pub !== '' && isset($runtime[$pub])) {
+            $peer = array_merge($peer, $runtime[$pub]);
+        }
+        $ts = (int)($peer['latest_handshake_ts'] ?? 0);
+        $peer['stale'] = !empty($peer['enabled']) && ($ts === 0 || ($now - $ts) > 1800);
+    }
+    unset($peer);
+    return [
+        'ok' => true,
+        'collected_at' => date(DATE_ATOM),
+        'peer_count' => count($peers),
+        'peers' => $peers,
+        'wg_available' => trim((string)(shell_exec('command -v wg 2>/dev/null') ?: '')) !== '',
+    ];
+}
+
+function wireguard_set_peer_enabled_job(array $payload): array
+{
+    $peerId = safe_peer_id((string)($payload['peer_id'] ?? ''));
+    $enabled = bool01($payload['enabled'] ?? '1');
+    if ($peerId === '' || $peerId === 'peer') {
+        throw new RuntimeException('peer_id is required');
+    }
+    $path = '/conf/config.xml';
+    $dom = new DOMDocument();
+    $dom->preserveWhiteSpace = false;
+    $dom->formatOutput = true;
+    if (!$dom->load($path)) {
+        throw new RuntimeException('Cannot parse config.xml');
+    }
+    $xpath = new DOMXPath($dom);
+    $nodes = $xpath->query('//*[publickey or public_key or pubkey or pub_key or serveraddress or endpoint or tunneladdress or allowedips]');
+    $target = null;
+    foreach ($nodes ?: [] as $node) {
+        if (!$node instanceof DOMElement) {
+            continue;
+        }
+        $id = wg_peer_id($node, dom_node_path($node));
+        if ($id === $peerId) {
+            $target = $node;
+            break;
+        }
+    }
+    if (!$target instanceof DOMElement) {
+        throw new RuntimeException('WireGuard peer not found: ' . $peerId);
+    }
+    $localBackup = '/conf/config.xml.controller_wg_' . date('Ymd_His') . '.bak';
+    if (!copy($path, $localBackup)) {
+        throw new RuntimeException('Cannot create local WireGuard backup');
+    }
+    dom_set_text($target, 'enabled', $enabled);
+    $tmp = $path . '.controller_wg_tmp';
+    if (!$dom->save($tmp)) {
+        throw new RuntimeException('Cannot write temporary config');
+    }
+    chmod($tmp, 0600);
+    if (!rename($tmp, $path)) {
+        @unlink($tmp);
+        throw new RuntimeException('Cannot replace config.xml');
+    }
+    $reload = [];
+    if (is_executable('/usr/local/sbin/configctl')) {
+        $reload[] = run_command_capture('/usr/local/sbin/configctl wireguard reload');
+        $reload[] = run_command_capture('/usr/local/sbin/configctl filter reload');
+    }
+    return ['ok' => true, 'peer_id' => $peerId, 'enabled' => $enabled, 'local_backup' => $localBackup, 'reload' => $reload];
+}
+
 function do_poll(array $config): array
 {
     require_registered($config);
@@ -586,12 +979,21 @@ function do_poll(array $config): array
         $result = ['ok' => true];
         $error = null;
         try {
-            if ($type === 'status.collect') {
+            if ($type === 'status.collect' || $type === 'system.info') {
                 $result = collect_status();
                 http_json('POST', $server . '/api/agent/heartbeat', $result, auth_headers($config), bool01($config['verify_tls'] ?? '1') === '1');
             } elseif ($type === 'config.backup') {
-                $r = do_backup($config);
+                $r = do_backup($config, 'manual', 'Backup requested by central controller', $jobId);
                 $result = $r['response'] ?? $r;
+            } elseif ($type === 'config.restore') {
+                $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
+                $result = restore_config_job($config, $payload, $jobId);
+            } elseif ($type === 'wireguard.status') {
+                $result = wireguard_status_job();
+            } elseif ($type === 'wireguard.peer.set_enabled') {
+                $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
+                $result = wireguard_set_peer_enabled_job($payload);
+                $result['status_after'] = wireguard_status_job();
             } elseif ($type === 'ping') {
                 $result = ['pong' => true, 'time' => date(DATE_ATOM)];
             } elseif ($type === 'alias.apply') {
