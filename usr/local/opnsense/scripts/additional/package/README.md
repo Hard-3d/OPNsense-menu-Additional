@@ -1,29 +1,27 @@
-# OPNsense Additional Menu v0.1.53
+# OPNsense Additional menu v0.1.56
 
-Версия для работы с OPNsense Central Controller v0.1.3.
+Обновление агента для OPNsense Central Controller v0.1.6.
 
-Добавлено в агент Controller connect:
+## Что изменено
 
-- расширенный `status.collect` / `system.info`;
-- `config.restore` для rollback config.xml;
-- локальный backup перед rollback;
-- центральный backup текущей конфигурации перед rollback;
-- `wireguard.status`;
-- `wireguard.peer.set_enabled`;
-- возврат статуса WireGuard peers в центральную панель.
+- WireGuard status собирается автоматически при heartbeat/Run once.
+- Добавлено определение факта настройки WireGuard даже без peers.
+- В payload WireGuard добавлены поля `configured`, `interfaces`, `interface_count`, `config_summary`, `collection_mode`.
+- Отдельный job `wireguard.status` больше не нужен для обычного отображения, но сохранён для совместимости.
 
-Установка:
+## Установка
 
 ```sh
 cd /
-fetch -o /tmp/opnsense-additional-menu-v0.1.53-root.zip "URL_К_АРХИВУ"
-unzip -o /tmp/opnsense-additional-menu-v0.1.53-root.zip -d /
+fetch -o /tmp/opnsense-additional-menu-v0.1.56-root.zip "URL_К_АРХИВУ"
+unzip -o /tmp/opnsense-additional-menu-v0.1.56-root.zip -d /
 chmod +x /install.sh
 /install.sh
 configctl webgui restart
 ```
 
-После обновления проверь:
+После установки:
 
-- Дополнительно -> Controller connect -> Run once.
-- В центральной панели создай задания `system.info`, `wireguard.status`, `config.backup`.
+```text
+Дополнительно -> Controller connect -> Run once
+```

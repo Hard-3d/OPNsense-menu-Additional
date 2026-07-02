@@ -4,8 +4,20 @@
 declare(strict_types=1);
 
 const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/controller_agent.json';
+const AGENT_VERSION_FILE = '/usr/local/opnsense/scripts/additional/VERSION';
 const STATUS_FILE = '/var/run/additional_controller_agent_status.json';
 const LOCK_FILE = '/tmp/additional_controller_agent.lock';
+
+function agent_version(): string
+{
+    if (is_readable(AGENT_VERSION_FILE)) {
+        $version = trim((string)file_get_contents(AGENT_VERSION_FILE));
+        if ($version !== '') {
+            return $version;
+        }
+    }
+    return 'v0.1.57';
+}
 
 function default_config(): array
 {
@@ -504,9 +516,11 @@ function collect_status(): array
     } catch (Throwable $e) {
         $wireguard = ['ok' => false, 'error' => $e->getMessage(), 'peers' => [], 'peer_count' => 0];
     }
+    $fwRules = collect_firewall_rules();
     return [
         'hostname' => gethostname() ?: null,
         'opnsense_version' => opnsense_version(),
+        'agent_version' => agent_version(),
         'freebsd_version' => freebsd_version(),
         'cpu_load' => isset($load[0]) ? round((float)$load[0], 2) : null,
         'cpu_load_5' => isset($load[1]) ? round((float)$load[1], 2) : null,
@@ -521,6 +535,8 @@ function collect_status(): array
         'gateways' => collect_gateways(),
         'plugins' => collect_plugins(),
         'wireguard' => $wireguard,
+        'firewall_rule_count' => count($fwRules),
+        'firewall_rules' => $fwRules,
     ];
 }
 
@@ -562,6 +578,7 @@ function do_register(array $argv): array
         'registration_token' => $token,
         'hostname' => gethostname() ?: '',
         'opnsense_version' => opnsense_version(),
+        'agent_version' => agent_version(),
     ], [], $verifyTls);
     if (empty($resp['ok']) || empty($resp['device_secret'])) {
         throw new RuntimeException('Registration failed: ' . json_encode($resp, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
@@ -1044,6 +1061,9 @@ function wg_peer_id(DOMElement $node, string $path): string
 function wg_is_peer_candidate(DOMElement $node): bool
 {
     $tag = strtolower($node->nodeName);
+    if (str_contains($tag, 'server') || str_contains($tag, 'instance') || str_contains($tag, 'local') || str_contains($tag, 'interface')) {
+        return false;
+    }
     $publicKey = wg_public_key($node);
     $endpoint = wg_endpoint_info($node);
     $allowed = wg_allowed_ips($node);
@@ -1127,6 +1147,64 @@ function collect_wg_config_peers(): array
     return array_values($peers);
 }
 
+
+function wg_interfaces(): array
+{
+    $cmd = escapeshellcmd(wg_binary()) . ' show interfaces';
+    $lines = shell_lines($cmd);
+    if (count($lines) === 1 && strpos($lines[0], ' ') !== false) {
+        return preg_split('/\s+/', $lines[0], -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    }
+    return $lines;
+}
+
+function collect_wg_config_summary(): array
+{
+    $path = '/conf/config.xml';
+    $summary = [
+        'configured' => false,
+        'wireguard_nodes' => 0,
+        'instance_count' => 0,
+        'peer_node_count' => 0,
+        'server_count' => 0,
+    ];
+    if (!is_readable($path)) {
+        return $summary;
+    }
+    $dom = new DOMDocument();
+    $dom->preserveWhiteSpace = false;
+    libxml_use_internal_errors(true);
+    if (!$dom->load($path)) {
+        return $summary;
+    }
+    $wireguardNodes = $dom->getElementsByTagName('wireguard');
+    $summary['wireguard_nodes'] = $wireguardNodes->length;
+    if ($wireguardNodes->length > 0) {
+        $summary['configured'] = true;
+        foreach ($wireguardNodes as $wg) {
+            if (!$wg instanceof DOMElement) {
+                continue;
+            }
+            foreach ($wg->getElementsByTagName('*') as $node) {
+                if (!$node instanceof DOMElement) {
+                    continue;
+                }
+                $tag = strtolower($node->nodeName);
+                if (str_contains($tag, 'server') || str_contains($tag, 'instance') || str_contains($tag, 'local')) {
+                    $summary['instance_count']++;
+                }
+                if (str_contains($tag, 'peer') || str_contains($tag, 'client') || str_contains($tag, 'endpoint')) {
+                    $summary['peer_node_count']++;
+                }
+                if (str_contains($tag, 'server')) {
+                    $summary['server_count']++;
+                }
+            }
+        }
+    }
+    return $summary;
+}
+
 function wg_binary(): string
 {
     foreach (['/usr/local/bin/wg', '/usr/bin/wg', '/bin/wg'] as $path) {
@@ -1166,8 +1244,86 @@ function wg_dump_peers(): array
     return $map;
 }
 
+
+function collect_wg_config_instances(): array
+{
+    $path = '/conf/config.xml';
+    if (!is_readable($path)) {
+        return [];
+    }
+    $dom = new DOMDocument();
+    $dom->preserveWhiteSpace = false;
+    libxml_use_internal_errors(true);
+    if (!$dom->load($path)) {
+        return [];
+    }
+    $instances = [];
+    $seen = [];
+    $wireguardNodes = $dom->getElementsByTagName('wireguard');
+    foreach ($wireguardNodes as $wireguard) {
+        if (!$wireguard instanceof DOMElement) {
+            continue;
+        }
+        foreach ($wireguard->getElementsByTagName('*') as $node) {
+            if (!$node instanceof DOMElement) {
+                continue;
+            }
+            $tag = strtolower($node->nodeName);
+            if (!(str_contains($tag, 'server') || str_contains($tag, 'instance') || str_contains($tag, 'local'))) {
+                continue;
+            }
+            $name = dom_text($node, ['name', 'description', 'descr'], '');
+            $listen = dom_text($node, ['listenport', 'listen_port', 'listen-port', 'port'], '');
+            $tunnel = dom_text($node, ['tunneladdress', 'tunnel_address', 'tunnel-address', 'tunneladdresses', 'tunnel_addresses', 'tunnel-addresses'], '');
+            $ifname = dom_text($node, ['interface', 'if', 'device'], '');
+            if ($name === '' && $listen === '' && $tunnel === '' && $ifname === '') {
+                continue;
+            }
+            $key = sha1(dom_node_path($node) . '|' . $name . '|' . $listen . '|' . $tunnel . '|' . $ifname);
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $enabledRaw = dom_text($node, ['enabled'], '1');
+            $instances[] = [
+                'name' => $name !== '' ? $name : ($ifname !== '' ? $ifname : 'wg instance'),
+                'interface' => $ifname,
+                'listen_port' => $listen,
+                'tunnel_address' => wg_split_list($tunnel),
+                'enabled' => bool01($enabledRaw) === '1',
+                'config_path' => dom_node_path($node),
+                'node_name' => $node->nodeName,
+            ];
+        }
+    }
+    usort($instances, static fn($a, $b): int => strnatcasecmp((string)($a['name'] ?? ''), (string)($b['name'] ?? '')));
+    return $instances;
+}
+
+function wg_peer_connection_status(array $peer, int $now): array
+{
+    if (empty($peer['enabled'])) {
+        return ['status' => 'disabled', 'label' => 'Disabled'];
+    }
+    $ts = (int)($peer['latest_handshake_ts'] ?? 0);
+    if ($ts <= 0) {
+        return ['status' => 'no_handshake', 'label' => 'No handshake'];
+    }
+    $age = $now - $ts;
+    if ($age <= 180) {
+        return ['status' => 'connected', 'label' => 'Connected'];
+    }
+    if ($age <= 1800) {
+        return ['status' => 'recent', 'label' => 'Recent'];
+    }
+    return ['status' => 'stale', 'label' => 'Stale'];
+}
+
 function wireguard_status_job(): array
 {
+    $configSummary = collect_wg_config_summary();
+    $configInstances = collect_wg_config_instances();
+    $runtimeInterfaces = wg_interfaces();
     $peers = collect_wg_config_peers();
     $runtime = wg_dump_peers();
     $now = time();
@@ -1186,6 +1342,9 @@ function wireguard_status_job(): array
         }
         $ts = (int)($peer['latest_handshake_ts'] ?? 0);
         $peer['stale'] = !empty($peer['enabled']) && ($ts === 0 || ($now - $ts) > 1800);
+        $conn = wg_peer_connection_status($peer, $now);
+        $peer['connection_status'] = $conn['status'];
+        $peer['connection_label'] = $conn['label'];
     }
     unset($peer);
 
@@ -1208,15 +1367,25 @@ function wireguard_status_job(): array
         ], $rt, [
             'stale' => $ts === 0 || ($now - $ts) > 1800,
         ]);
+        $conn = wg_peer_connection_status($peers[count($peers)-1], $now);
+        $peers[count($peers)-1]['connection_status'] = $conn['status'];
+        $peers[count($peers)-1]['connection_label'] = $conn['label'];
     }
 
     usort($peers, static fn($a, $b): int => strnatcasecmp((string)($a['name'] ?? ''), (string)($b['name'] ?? '')));
     return [
         'ok' => true,
         'collected_at' => date(DATE_ATOM),
+        'configured' => !empty($configSummary['configured']) || !empty($runtimeInterfaces) || count($peers) > 0,
+        'config_summary' => $configSummary,
+        'interfaces' => $runtimeInterfaces,
+        'runtime_interfaces' => $runtimeInterfaces,
+        'configured_interfaces' => $configInstances,
+        'interface_count' => max(count($runtimeInterfaces), count($configInstances)),
         'peer_count' => count($peers),
         'peers' => $peers,
         'wg_available' => trim((string)(shell_exec('command -v wg 2>/dev/null') ?: '')) !== '' || is_executable('/usr/local/bin/wg'),
+        'collection_mode' => 'heartbeat',
     ];
 }
 
@@ -1562,6 +1731,94 @@ function apply_dns_override_job(array $payload): array
     return ['ok' => true, 'override_id' => $payload['override_id'] ?? null, 'name' => $name, 'type' => $type, 'created' => $created, 'local_backup' => $localBackup, 'reload' => $reload];
 }
 
+
+function fw_endpoint_from_node(?DOMElement $node): array
+{
+    if (!$node instanceof DOMElement) {
+        return ['text' => 'any', 'port' => ''];
+    }
+    $text = 'any';
+    if (dom_direct_child($node, ['any']) instanceof DOMElement) {
+        $text = 'any';
+    } else {
+        foreach (['network', 'address', 'not', 'interfaceip'] as $name) {
+            $child = dom_direct_child($node, [$name]);
+            if ($child instanceof DOMElement) {
+                $text = trim((string)$child->textContent);
+                if ($name === 'not') {
+                    $text = '!' . $text;
+                }
+                break;
+            }
+        }
+    }
+    $port = dom_text($node, ['port'], '');
+    return ['text' => $text !== '' ? $text : 'any', 'port' => $port];
+}
+
+function collect_firewall_rules(): array
+{
+    $path = '/conf/config.xml';
+    if (!is_readable($path)) {
+        return [];
+    }
+    $dom = new DOMDocument();
+    $dom->preserveWhiteSpace = false;
+    libxml_use_internal_errors(true);
+    if (!$dom->load($path)) {
+        return [];
+    }
+    $rules = [];
+    $sequence = 0;
+    foreach ($dom->getElementsByTagName('filter') as $filter) {
+        if (!$filter instanceof DOMElement) {
+            continue;
+        }
+        foreach ($filter->childNodes as $node) {
+            if (!$node instanceof DOMElement || strtolower($node->nodeName) !== 'rule') {
+                continue;
+            }
+            $sequence++;
+            $source = fw_endpoint_from_node(dom_direct_child($node, ['source']));
+            $destination = fw_endpoint_from_node(dom_direct_child($node, ['destination']));
+            $descr = dom_text($node, ['descr', 'description'], '');
+            $uuid = $node->hasAttribute('uuid') ? $node->getAttribute('uuid') : dom_text($node, ['uuid'], '');
+            $rules[] = [
+                'sequence' => $sequence,
+                'uuid' => $uuid,
+                'tracker' => dom_text($node, ['tracker'], ''),
+                'enabled' => !(dom_direct_child($node, ['disabled']) instanceof DOMElement),
+                'action' => dom_text($node, ['type'], 'pass'),
+                'interface' => dom_text($node, ['interface'], ''),
+                'direction' => dom_text($node, ['direction'], ''),
+                'quick' => bool01(dom_text($node, ['quick'], '1')) === '1',
+                'ipprotocol' => dom_text($node, ['ipprotocol'], ''),
+                'protocol' => dom_text($node, ['protocol'], 'any'),
+                'source' => $source['text'],
+                'source_port' => $source['port'],
+                'destination' => $destination['text'],
+                'destination_port' => $destination['port'],
+                'log' => bool01(dom_text($node, ['log'], '0')) === '1',
+                'category' => dom_text($node, ['category'], ''),
+                'description' => $descr,
+                'managed_by_controller' => str_contains($descr, 'central:'),
+            ];
+        }
+    }
+    return $rules;
+}
+
+function firewall_rules_collect_job(): array
+{
+    $rules = collect_firewall_rules();
+    return [
+        'ok' => true,
+        'collected_at' => date(DATE_ATOM),
+        'rule_count' => count($rules),
+        'rules' => $rules,
+    ];
+}
+
 function do_poll(array $config): array
 {
     require_registered($config);
@@ -1584,6 +1841,8 @@ function do_poll(array $config): array
             } elseif ($type === 'config.restore') {
                 $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
                 $result = restore_config_job($config, $payload, $jobId);
+            } elseif ($type === 'firewall.rules.collect') {
+                $result = firewall_rules_collect_job();
             } elseif ($type === 'wireguard.status') {
                 $result = wireguard_status_job();
             } elseif ($type === 'wireguard.peer.set_enabled') {
