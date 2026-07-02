@@ -347,6 +347,163 @@ function do_job_result(array $config, int $jobId, string $status, array $result,
     ], auth_headers($config), bool01($config['verify_tls'] ?? '1') === '1');
 }
 
+
+function alias_uuid_v4(): string
+{
+    $data = random_bytes(16);
+    $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
+    $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
+    return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
+}
+
+function xml_ensure_child(SimpleXMLElement $node, string $name): SimpleXMLElement
+{
+    if (!isset($node->{$name})) {
+        return $node->addChild($name);
+    }
+    return $node->{$name};
+}
+
+function xml_set_child(SimpleXMLElement $node, string $name, string $value): void
+{
+    if (!isset($node->{$name})) {
+        $node->addChild($name, htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
+        return;
+    }
+    $node->{$name} = $value;
+}
+
+function run_command_capture(string $command): array
+{
+    $output = [];
+    $exitCode = 0;
+    exec($command . ' 2>&1', $output, $exitCode);
+    return [
+        'command' => $command,
+        'exit_code' => $exitCode,
+        'output' => trim(implode("\n", $output)),
+    ];
+}
+
+function refresh_firewall_aliases(): array
+{
+    $commands = [];
+    if (is_executable('/usr/local/sbin/configctl')) {
+        $commands[] = '/usr/local/sbin/configctl filter refresh_aliases';
+    }
+    if (is_executable('/usr/local/opnsense/scripts/filter/update_tables.py')) {
+        $python = is_executable('/usr/local/bin/python3') ? '/usr/local/bin/python3' : '/usr/bin/env python3';
+        $commands[] = $python . ' /usr/local/opnsense/scripts/filter/update_tables.py';
+    }
+
+    $attempts = [];
+    foreach ($commands as $cmd) {
+        $result = run_command_capture($cmd);
+        $attempts[] = $result;
+        if ($result['exit_code'] === 0) {
+            return ['status' => 'ok', 'attempts' => $attempts, 'used_command' => $cmd];
+        }
+    }
+    return ['status' => 'skipped', 'message' => 'No successful alias refresh command', 'attempts' => $attempts];
+}
+
+function apply_alias_job(array $payload): array
+{
+    $name = trim((string)($payload['name'] ?? ''));
+    $type = trim((string)($payload['alias_type'] ?? $payload['type'] ?? 'urljson'));
+    $sourceUrl = trim((string)($payload['source_url'] ?? $payload['content'] ?? ''));
+    $pathExpression = trim((string)($payload['path_expression'] ?? ''));
+    $description = trim((string)($payload['description'] ?? 'Managed by OPNsense Central Controller'));
+    $updatefreq = trim((string)($payload['updatefreq'] ?? '1'));
+    $proto = trim((string)($payload['proto'] ?? ''));
+
+    if (!preg_match('/^[A-Za-z][A-Za-z0-9_]{0,63}$/', $name)) {
+        throw new RuntimeException('Invalid alias name: ' . $name);
+    }
+    if (!in_array($type, ['urljson', 'urltable'], true)) {
+        throw new RuntimeException('Unsupported alias type: ' . $type);
+    }
+    if ($sourceUrl === '' || !preg_match('#^https?://#i', $sourceUrl)) {
+        throw new RuntimeException('Invalid alias source URL');
+    }
+    if ($type === 'urljson' && $pathExpression === '') {
+        throw new RuntimeException('Path expression is required for urljson alias');
+    }
+    if ($updatefreq !== '' && !preg_match('/^[0-9]+$/', $updatefreq)) {
+        throw new RuntimeException('Invalid updatefreq: ' . $updatefreq);
+    }
+    if ($proto !== '' && !in_array($proto, ['IPv4', 'IPv6', 'IPv4,IPv6', 'IPv6,IPv4'], true)) {
+        throw new RuntimeException('Invalid proto: ' . $proto);
+    }
+
+    $configPath = '/conf/config.xml';
+    if (!is_readable($configPath) || !is_writable($configPath)) {
+        throw new RuntimeException('Cannot read/write ' . $configPath);
+    }
+
+    $backupPath = '/conf/config.xml.controller_alias_' . date('Ymd_His') . '.bak';
+    if (!copy($configPath, $backupPath)) {
+        throw new RuntimeException('Cannot create config backup ' . $backupPath);
+    }
+
+    libxml_use_internal_errors(true);
+    $xml = simplexml_load_file($configPath);
+    if (!$xml instanceof SimpleXMLElement) {
+        $errors = array_map(static fn($e) => trim($e->message), libxml_get_errors());
+        throw new RuntimeException('Cannot parse config.xml: ' . implode('; ', $errors));
+    }
+
+    $opnsense = xml_ensure_child($xml, 'OPNsense');
+    $firewall = xml_ensure_child($opnsense, 'Firewall');
+    $aliasRoot = xml_ensure_child($firewall, 'Alias');
+    $aliases = xml_ensure_child($aliasRoot, 'aliases');
+
+    $entry = null;
+    foreach ($aliases->children() as $child) {
+        if ($child->getName() === 'alias' && (string)$child->name === $name) {
+            $entry = $child;
+            break;
+        }
+    }
+    $created = false;
+    if (!$entry instanceof SimpleXMLElement) {
+        $entry = $aliases->addChild('alias');
+        $entry->addAttribute('uuid', alias_uuid_v4());
+        $created = true;
+    }
+
+    xml_set_child($entry, 'enabled', '1');
+    xml_set_child($entry, 'name', $name);
+    xml_set_child($entry, 'type', $type);
+    xml_set_child($entry, 'path_expression', $type === 'urljson' ? $pathExpression : '');
+    xml_set_child($entry, 'proto', $proto);
+    xml_set_child($entry, 'counters', (string)($payload['counters'] ?? '0'));
+    xml_set_child($entry, 'updatefreq', $updatefreq === '' ? '1' : $updatefreq);
+    xml_set_child($entry, 'content', $sourceUrl);
+    xml_set_child($entry, 'description', $description);
+
+    $tmpPath = $configPath . '.controller_alias_tmp';
+    if ($xml->asXML($tmpPath) === false) {
+        throw new RuntimeException('Cannot write temporary config ' . $tmpPath);
+    }
+    chmod($tmpPath, 0600);
+    if (!rename($tmpPath, $configPath)) {
+        @unlink($tmpPath);
+        throw new RuntimeException('Cannot replace ' . $configPath);
+    }
+
+    $refresh = refresh_firewall_aliases();
+    return [
+        'ok' => true,
+        'alias_id' => $payload['alias_id'] ?? null,
+        'name' => $name,
+        'type' => $type,
+        'created' => $created,
+        'config_backup' => $backupPath,
+        'refresh' => $refresh,
+    ];
+}
+
 function do_poll(array $config): array
 {
     require_registered($config);
@@ -368,6 +525,9 @@ function do_poll(array $config): array
                 $result = $r['response'] ?? $r;
             } elseif ($type === 'ping') {
                 $result = ['pong' => true, 'time' => date(DATE_ATOM)];
+            } elseif ($type === 'alias.apply') {
+                $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
+                $result = apply_alias_job($payload);
             } else {
                 $status = 'failed';
                 $error = 'Unknown job type: ' . $type;
