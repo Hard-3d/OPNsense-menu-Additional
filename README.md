@@ -278,3 +278,8 @@ Release asset name: opnsense-additional-menu-v0.1.49-root.zip
 - Теперь matching учитывает не только tunneladdress, но и serveraddress/endpoint peer.
 - Если точный peer не найден, при деградации reset выполняется для всех активных WireGuard clients.
 - Apply выполняет per-UUID `configctl wireguard stop/start/restart <uuid>` и затем глобальный `reconfigure/restart/reload`, чтобы повторить ручное выключение/включение peer надёжнее.
+
+
+## v0.1.50
+
+Added Controller connect page for registering this OPNsense node in OPNsense Central Controller. Includes server URL, device UUID, registration token, heartbeat, job polling and config.xml backup upload.

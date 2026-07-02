@@ -8,5 +8,6 @@
         <Udp2raw order="50" VisibleName="udp2raw" url="/ui/additional/index/udp2raw"/>
         <Scheduler order="60" VisibleName="Scheduler" url="/ui/additional/index/scheduler"/>
         <Updater order="70" VisibleName="Update" url="/ui/additional/index/updater"/>
+        <Central order="80" VisibleName="Controller connect" url="/ui/additional/index/central"/>
     </Additional>
 </menu>

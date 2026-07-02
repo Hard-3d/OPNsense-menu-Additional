@@ -40,6 +40,10 @@ function tasks_definition(): array
             'title' => 'Update check',
             'command' => '/usr/local/opnsense/scripts/additional/additional-updater.php --check --json',
         ],
+        'central_controller' => [
+            'title' => 'Controller agent',
+            'command' => '/usr/local/opnsense/scripts/additional/controller-agent.php run-once --json',
+        ],
     ];
 }
 
@@ -87,6 +91,12 @@ function default_task_config(string $taskId): array
             'mode' => 'daily',
             'interval_minutes' => '1440',
             'time' => '06:00',
+        ],
+        'central_controller' => [
+            'enabled' => '0',
+            'mode' => 'interval',
+            'interval_minutes' => '1',
+            'time' => '00:00',
         ],
     ];
 

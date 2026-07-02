@@ -74,4 +74,13 @@
                     <pattern>api/additional/scheduler/*</pattern>
         </patterns>
     </page-additional-updater>
+    <page-additional-central>
+        <name>WebCfg - Additional: Controller connect</name>
+        <description>Allow access to Additional Controller connect</description>
+        <patterns>
+            <pattern>ui/additional/index/central</pattern>
+            <pattern>api/additional/central/*</pattern>
+            <pattern>api/additional/scheduler/*</pattern>
+        </patterns>
+    </page-additional-central>
 </acl>

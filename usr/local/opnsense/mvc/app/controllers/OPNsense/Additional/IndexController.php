@@ -45,4 +45,9 @@ class IndexController extends BaseIndexController
     {
         $this->view->pick('OPNsense/Additional/updater');
     }
+
+    public function centralAction()
+    {
+        $this->view->pick('OPNsense/Additional/central');
+    }
 }

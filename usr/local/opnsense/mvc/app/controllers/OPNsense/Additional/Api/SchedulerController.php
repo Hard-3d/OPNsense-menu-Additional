@@ -23,6 +23,7 @@ class SchedulerController extends ApiControllerBase
             'check_wan' => ['title' => 'Check WAN'],
             'udp2raw_watchdog' => ['title' => 'udp2raw watchdog'],
             'update_check' => ['title' => 'Update check'],
+            'central_controller' => ['title' => 'Controller agent'],
         ];
     }
 
@@ -36,6 +37,7 @@ class SchedulerController extends ApiControllerBase
             'check_wan' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '2', 'time' => '00:00'],
             'udp2raw_watchdog' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '1', 'time' => '00:00'],
             'update_check' => ['enabled' => '0', 'mode' => 'daily', 'interval_minutes' => '1440', 'time' => '06:00'],
+            'central_controller' => ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '1', 'time' => '00:00'],
         ];
 
         return $defaults[$taskId] ?? ['enabled' => '0', 'mode' => 'interval', 'interval_minutes' => '60', 'time' => '00:00'];
