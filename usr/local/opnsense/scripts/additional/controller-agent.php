@@ -16,7 +16,7 @@ function agent_version(): string
             return $version;
         }
     }
-    return 'v0.1.58';
+    return 'v0.1.59';
 }
 
 function default_config(): array
@@ -1152,10 +1152,20 @@ function wg_interfaces(): array
 {
     $cmd = escapeshellcmd(wg_binary()) . ' show interfaces';
     $lines = shell_lines($cmd);
-    if (count($lines) === 1 && strpos($lines[0], ' ') !== false) {
-        return preg_split('/\s+/', $lines[0], -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    $items = [];
+    foreach ($lines as $line) {
+        foreach (preg_split('/\s+/', trim((string)$line), -1, PREG_SPLIT_NO_EMPTY) ?: [] as $ifname) {
+            $ifname = trim((string)$ifname);
+            if ($ifname !== '') {
+                $items[$ifname] = true;
+            }
+        }
     }
-    return $lines;
+    $result = array_keys($items);
+    usort($result, static function (string $a, string $b): int {
+        return wg_interface_sort_key($a) <=> wg_interface_sort_key($b);
+    });
+    return $result;
 }
 
 function collect_wg_config_summary(): array
@@ -1217,16 +1227,40 @@ function wg_binary(): string
 }
 
 
+
+function wg_dump_fields(string $line): array
+{
+    $line = trim($line);
+    if ($line === '') {
+        return [];
+    }
+    if (strpos($line, "\t") !== false) {
+        return array_map('trim', explode("\t", $line));
+    }
+    return preg_split('/\s+/', $line, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+}
+
+function wg_interface_sort_key(string $ifname): array
+{
+    if (preg_match('/^(.*?)(\d+)$/', $ifname, $m)) {
+        return [$m[1], (int)$m[2], $ifname];
+    }
+    return [$ifname, 0, $ifname];
+}
+
 function wg_dump_interfaces_info(): array
 {
     $cmd = escapeshellcmd(wg_binary()) . ' show all dump';
     $lines = shell_lines($cmd);
     $items = [];
+    $seen = [];
     foreach ($lines as $line) {
-        $p = explode("\t", $line);
-        // Interface lines in `wg show all dump` have 5 fields:
-        // interface, private_key, public_key, listen_port, fwmark
-        if (count($p) === 5) {
+        $p = wg_dump_fields($line);
+        // Interface lines in `wg show all dump` normally have 5 fields:
+        // interface, private_key, public_key, listen_port, fwmark.
+        // On different FreeBSD/WireGuard builds the trailing fwmark may be omitted,
+        // so accept 4..8 fields, but never peer lines with 9+ fields.
+        if (count($p) >= 4 && count($p) < 9) {
             $ifname = trim((string)($p[0] ?? ''));
             if ($ifname === '') {
                 continue;
@@ -1237,9 +1271,33 @@ function wg_dump_interfaces_info(): array
                 'listen_port' => $listen,
                 'public_key' => trim((string)($p[2] ?? '')),
                 'fwmark' => trim((string)($p[4] ?? '')),
+                'source' => 'wg_dump',
             ];
+            $seen[$ifname] = true;
         }
     }
+
+    // Fallback: if dump parsing did not return interface metadata, still ask
+    // WireGuard per interface. This fixes empty WG interface names in the
+    // central table when `wg show all dump` format differs.
+    foreach (wg_interfaces() as $ifname) {
+        if (isset($seen[$ifname])) {
+            continue;
+        }
+        $listen = shell_one(escapeshellcmd(wg_binary()) . ' show ' . escapeshellarg($ifname) . ' listen-port');
+        $pub = shell_one(escapeshellcmd(wg_binary()) . ' show ' . escapeshellarg($ifname) . ' public-key');
+        $items[] = [
+            'interface' => $ifname,
+            'listen_port' => trim((string)$listen),
+            'public_key' => trim((string)$pub),
+            'fwmark' => '',
+            'source' => 'wg_show_interface',
+        ];
+    }
+
+    usort($items, static function (array $a, array $b): int {
+        return wg_interface_sort_key((string)($a['interface'] ?? '')) <=> wg_interface_sort_key((string)($b['interface'] ?? ''));
+    });
     return $items;
 }
 
@@ -1248,16 +1306,28 @@ function enrich_wg_instances_with_runtime(array $instances, array $runtimeInfo, 
     $byPort = [];
     foreach ($runtimeInfo as $rt) {
         $port = trim((string)($rt['listen_port'] ?? ''));
-        if ($port !== '' && !isset($byPort[$port])) {
-            $byPort[$port] = (string)($rt['interface'] ?? '');
+        $ifname = trim((string)($rt['interface'] ?? ''));
+        if ($port !== '' && $ifname !== '' && !isset($byPort[$port])) {
+            $byPort[$port] = $ifname;
         }
     }
 
+    // Keep configured instance order close to OPNsense runtime table: listen port first, then name.
+    uasort($instances, static function ($a, $b): int {
+        $pa = trim((string)($a['listen_port'] ?? ''));
+        $pb = trim((string)($b['listen_port'] ?? ''));
+        if ($pa !== '' && $pb !== '' && ctype_digit($pa) && ctype_digit($pb) && (int)$pa !== (int)$pb) {
+            return (int)$pa <=> (int)$pb;
+        }
+        return strnatcasecmp((string)($a['name'] ?? ''), (string)($b['name'] ?? ''));
+    });
+
     $used = [];
-    foreach ($instances as $idx => &$inst) {
+    foreach ($instances as &$inst) {
         $current = trim((string)($inst['interface'] ?? ''));
         if ($current !== '') {
             $used[$current] = true;
+            $inst['interface_source'] = $inst['interface_source'] ?? 'config';
             continue;
         }
         $port = trim((string)($inst['listen_port'] ?? ''));
@@ -1270,8 +1340,6 @@ function enrich_wg_instances_with_runtime(array $instances, array $runtimeInfo, 
     }
     unset($inst);
 
-    // Fallback: OPNsense may not store wg0/wg1 names in config.xml.
-    // If counts match, map remaining runtime interfaces by order after sorting by listen port/name.
     $remainingRuntime = [];
     foreach ($runtimeInterfaces as $ifname) {
         $ifname = trim((string)$ifname);
@@ -1279,6 +1347,10 @@ function enrich_wg_instances_with_runtime(array $instances, array $runtimeInfo, 
             $remainingRuntime[] = $ifname;
         }
     }
+    usort($remainingRuntime, static function (string $a, string $b): int {
+        return wg_interface_sort_key($a) <=> wg_interface_sort_key($b);
+    });
+
     foreach ($instances as &$inst) {
         if (trim((string)($inst['interface'] ?? '')) === '' && $remainingRuntime) {
             $ifname = array_shift($remainingRuntime);
@@ -1288,7 +1360,8 @@ function enrich_wg_instances_with_runtime(array $instances, array $runtimeInfo, 
         }
     }
     unset($inst);
-    return $instances;
+
+    return array_values($instances);
 }
 
 function wg_dump_peers(): array
@@ -1297,7 +1370,7 @@ function wg_dump_peers(): array
     $lines = shell_lines($cmd);
     $map = [];
     foreach ($lines as $line) {
-        $p = explode("\t", $line);
+        $p = wg_dump_fields($line);
         if (count($p) < 9) {
             continue;
         }
