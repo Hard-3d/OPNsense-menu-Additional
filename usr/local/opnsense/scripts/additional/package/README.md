@@ -1,17 +1,17 @@
-# OPNsense Additional menu v0.1.61
+# OPNsense Additional menu v0.1.62
 
-Техническое обновление агента для синхронизации версий с Central Controller v0.1.11.
+Техническое обновление агента для совместимости с Central Controller v0.1.13.
 
-- Агент v0.1.61.
-- Логика подключения к центральному серверу сохранена.
-- Совместимость с job_uuid и numeric job_id сохранена.
+- Агент v0.1.62.
+- Сохраняется поддержка `job_uuid` и старого `job_id` как fallback.
+- Изменений в меню OPNsense и логике WireGuard не требуется.
 
 ## Обновление
 
 ```sh
 cd /
-fetch -o /tmp/opnsense-additional-menu-v0.1.61-root.zip "URL_К_АРХИВУ"
-unzip -o /tmp/opnsense-additional-menu-v0.1.61-root.zip -d /
+fetch -o /tmp/opnsense-additional-menu-v0.1.62-root.zip "URL_К_АРХИВУ"
+unzip -o /tmp/opnsense-additional-menu-v0.1.62-root.zip -d /
 chmod +x /install.sh
 /install.sh
 configctl webgui restart
