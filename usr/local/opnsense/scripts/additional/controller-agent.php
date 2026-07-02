@@ -966,6 +966,296 @@ function wireguard_set_peer_enabled_job(array $payload): array
     return ['ok' => true, 'peer_id' => $peerId, 'enabled' => $enabled, 'local_backup' => $localBackup, 'reload' => $reload];
 }
 
+
+function controller_uuid_v4(): string
+{
+    return alias_uuid_v4();
+}
+
+function dom_ensure_path(DOMDocument $dom, DOMElement $root, array $names): DOMElement
+{
+    $node = $root;
+    foreach ($names as $name) {
+        $found = null;
+        foreach ($node->childNodes as $child) {
+            if ($child instanceof DOMElement && strtolower($child->nodeName) === strtolower($name)) {
+                $found = $child;
+                break;
+            }
+        }
+        if (!$found instanceof DOMElement) {
+            $found = $dom->createElement($name);
+            $node->appendChild($found);
+        }
+        $node = $found;
+    }
+    return $node;
+}
+
+function dom_remove_children(DOMElement $node): void
+{
+    while ($node->firstChild) {
+        $node->removeChild($node->firstChild);
+    }
+}
+
+function dom_bool_text(bool $value): string
+{
+    return $value ? '1' : '0';
+}
+
+function fw_rule_key(array $payload): string
+{
+    $name = trim((string)($payload['name'] ?? ''));
+    if ($name === '') {
+        $name = 'template_' . (int)($payload['template_id'] ?? 0);
+    }
+    return 'central:' . $name;
+}
+
+function normalize_pf_protocol(string $protocol): string
+{
+    $protocol = strtolower(trim($protocol));
+    if ($protocol === 'tcp_udp') {
+        return 'TCP/UDP';
+    }
+    return $protocol === 'any' ? 'any' : $protocol;
+}
+
+function fw_set_endpoint(DOMDocument $dom, DOMElement $parent, string $value, string $port): void
+{
+    dom_remove_children($parent);
+    $value = trim($value) ?: 'any';
+    $port = trim($port);
+    if (strtolower($value) === 'any' || $value === '*') {
+        $parent->appendChild($dom->createElement('any', '1'));
+    } elseif (preg_match('/\s+net$/i', $value)) {
+        $parent->appendChild($dom->createElement('network', $value));
+    } else {
+        $parent->appendChild($dom->createElement('address', $value));
+    }
+    if ($port !== '' && strtolower($port) !== 'any') {
+        $parent->appendChild($dom->createElement('port', $port));
+    }
+}
+
+function apply_firewall_rule_template_job(array $payload): array
+{
+    $name = trim((string)($payload['name'] ?? ''));
+    if (!preg_match('/^[A-Za-z][A-Za-z0-9_\-]{0,63}$/', $name)) {
+        throw new RuntimeException('Invalid firewall template name: ' . $name);
+    }
+    $action = strtolower(trim((string)($payload['action'] ?? 'pass')));
+    if (!in_array($action, ['pass', 'block', 'reject'], true)) {
+        throw new RuntimeException('Unsupported firewall action: ' . $action);
+    }
+    $direction = strtolower(trim((string)($payload['direction'] ?? 'in')));
+    if (!in_array($direction, ['in', 'out'], true)) {
+        throw new RuntimeException('Unsupported firewall direction: ' . $direction);
+    }
+    $ipprotocol = strtolower(trim((string)($payload['ipprotocol'] ?? 'inet46')));
+    if (!in_array($ipprotocol, ['inet', 'inet6', 'inet46'], true)) {
+        throw new RuntimeException('Unsupported ipprotocol: ' . $ipprotocol);
+    }
+    $protocol = normalize_pf_protocol((string)($payload['protocol'] ?? 'any'));
+    $interface = trim((string)($payload['interface'] ?? 'lan'));
+    if ($interface === '' || preg_match('/[^A-Za-z0-9_.\-]/', $interface)) {
+        throw new RuntimeException('Invalid interface: ' . $interface);
+    }
+
+    $configPath = '/conf/config.xml';
+    if (!is_readable($configPath) || !is_writable($configPath)) {
+        throw new RuntimeException('Cannot read/write ' . $configPath);
+    }
+    $localBackup = '/conf/config.xml.controller_firewall_' . date('Ymd_His') . '.bak';
+    if (!copy($configPath, $localBackup)) {
+        throw new RuntimeException('Cannot create local firewall backup');
+    }
+
+    $dom = new DOMDocument();
+    $dom->preserveWhiteSpace = false;
+    $dom->formatOutput = true;
+    if (!$dom->load($configPath)) {
+        throw new RuntimeException('Cannot parse config.xml');
+    }
+    $root = $dom->documentElement;
+    if (!$root instanceof DOMElement) {
+        throw new RuntimeException('Invalid config.xml root');
+    }
+    $filter = dom_ensure_path($dom, $root, ['filter']);
+    $rule = null;
+    foreach ($filter->childNodes as $child) {
+        if ($child instanceof DOMElement && strtolower($child->nodeName) === 'rule') {
+            $descr = dom_text($child, ['descr', 'description'], '');
+            if (str_contains($descr, fw_rule_key($payload))) {
+                $rule = $child;
+                break;
+            }
+        }
+    }
+    $created = false;
+    if (!$rule instanceof DOMElement) {
+        $rule = $dom->createElement('rule');
+        $rule->setAttribute('uuid', controller_uuid_v4());
+        $filter->appendChild($rule);
+        $created = true;
+    }
+
+    dom_set_text($rule, 'type', $action);
+    dom_set_text($rule, 'interface', $interface);
+    dom_set_text($rule, 'ipprotocol', $ipprotocol);
+    dom_set_text($rule, 'statetype', 'keep state');
+    dom_set_text($rule, 'direction', $direction);
+    dom_set_text($rule, 'quick', dom_bool_text(!empty($payload['quick'])));
+    dom_set_text($rule, 'protocol', $protocol);
+    dom_set_text($rule, 'log', dom_bool_text(!empty($payload['log'])));
+    if (empty($payload['enabled'])) {
+        dom_set_text($rule, 'disabled', '1');
+    } else {
+        $disabled = dom_direct_child($rule, ['disabled']);
+        if ($disabled instanceof DOMElement) {
+            $rule->removeChild($disabled);
+        }
+    }
+    $source = dom_direct_child($rule, ['source']);
+    if (!$source instanceof DOMElement) {
+        $source = $dom->createElement('source');
+        $rule->appendChild($source);
+    }
+    $destination = dom_direct_child($rule, ['destination']);
+    if (!$destination instanceof DOMElement) {
+        $destination = $dom->createElement('destination');
+        $rule->appendChild($destination);
+    }
+    fw_set_endpoint($dom, $source, (string)($payload['source'] ?? 'any'), (string)($payload['source_port'] ?? ''));
+    fw_set_endpoint($dom, $destination, (string)($payload['destination'] ?? 'any'), (string)($payload['destination_port'] ?? ''));
+    $descr = trim((string)($payload['description'] ?? 'Managed by OPNsense Central Controller'));
+    dom_set_text($rule, 'descr', $descr . ' [' . fw_rule_key($payload) . ']');
+    dom_set_text($rule, 'category', trim((string)($payload['category'] ?? 'Central Controller')) ?: 'Central Controller');
+
+    $tmp = $configPath . '.controller_firewall_tmp';
+    if (!$dom->save($tmp)) {
+        throw new RuntimeException('Cannot write temporary config');
+    }
+    chmod($tmp, 0600);
+    if (!rename($tmp, $configPath)) {
+        @unlink($tmp);
+        throw new RuntimeException('Cannot replace config.xml');
+    }
+    $reload = [];
+    if (is_executable('/usr/local/sbin/configctl')) {
+        $reload[] = run_command_capture('/usr/local/sbin/configctl filter reload');
+    }
+    return ['ok' => true, 'template_id' => $payload['template_id'] ?? null, 'name' => $name, 'created' => $created, 'local_backup' => $localBackup, 'reload' => $reload];
+}
+
+function dns_override_key(array $payload): string
+{
+    $name = trim((string)($payload['name'] ?? ''));
+    if ($name === '') {
+        $name = 'override_' . (int)($payload['override_id'] ?? 0);
+    }
+    return 'central:' . $name;
+}
+
+function apply_dns_override_job(array $payload): array
+{
+    $name = trim((string)($payload['name'] ?? ''));
+    if (!preg_match('/^[A-Za-z][A-Za-z0-9_\-]{0,63}$/', $name)) {
+        throw new RuntimeException('Invalid DNS override name: ' . $name);
+    }
+    $type = strtolower(trim((string)($payload['override_type'] ?? 'host')));
+    if (!in_array($type, ['host', 'domain'], true)) {
+        throw new RuntimeException('Unsupported DNS override type: ' . $type);
+    }
+    $rr = strtoupper(trim((string)($payload['rr'] ?? 'A')));
+    $domain = strtolower(trim((string)($payload['domain'] ?? '')));
+    $hostname = strtolower(trim((string)($payload['hostname'] ?? '')));
+    $value = trim((string)($payload['value'] ?? ''));
+    if ($domain === '' || $value === '') {
+        throw new RuntimeException('domain and value are required');
+    }
+
+    $configPath = '/conf/config.xml';
+    if (!is_readable($configPath) || !is_writable($configPath)) {
+        throw new RuntimeException('Cannot read/write ' . $configPath);
+    }
+    $localBackup = '/conf/config.xml.controller_dns_' . date('Ymd_His') . '.bak';
+    if (!copy($configPath, $localBackup)) {
+        throw new RuntimeException('Cannot create local DNS backup');
+    }
+
+    $dom = new DOMDocument();
+    $dom->preserveWhiteSpace = false;
+    $dom->formatOutput = true;
+    if (!$dom->load($configPath)) {
+        throw new RuntimeException('Cannot parse config.xml');
+    }
+    $root = $dom->documentElement;
+    if (!$root instanceof DOMElement) {
+        throw new RuntimeException('Invalid config.xml root');
+    }
+    $opnsense = dom_ensure_path($dom, $root, ['OPNsense']);
+    $unbound = dom_ensure_path($dom, $opnsense, ['unboundplus']);
+    $container = dom_ensure_path($dom, $unbound, [$type === 'host' ? 'hosts' : 'domains']);
+
+    $entryTag = $type === 'host' ? 'host' : 'domain';
+    $entry = null;
+    foreach ($container->childNodes as $child) {
+        if ($child instanceof DOMElement && strtolower($child->nodeName) === $entryTag) {
+            $desc = dom_text($child, ['description', 'descr'], '');
+            if (str_contains($desc, dns_override_key($payload))) {
+                $entry = $child;
+                break;
+            }
+        }
+    }
+    $created = false;
+    if (!$entry instanceof DOMElement) {
+        $entry = $dom->createElement($entryTag);
+        $entry->setAttribute('uuid', controller_uuid_v4());
+        $container->appendChild($entry);
+        $created = true;
+    }
+
+    dom_set_text($entry, 'enabled', dom_bool_text(!empty($payload['enabled'])));
+    if ($type === 'host') {
+        dom_set_text($entry, 'hostname', $hostname);
+        dom_set_text($entry, 'domain', $domain);
+        dom_set_text($entry, 'rr', $rr);
+        if ($rr === 'MX') {
+            dom_set_text($entry, 'mx', $value);
+            dom_set_text($entry, 'mxprio', trim((string)($payload['mx_priority'] ?? '')) ?: '10');
+            dom_set_text($entry, 'server', '');
+        } else {
+            dom_set_text($entry, 'server', $value);
+            dom_set_text($entry, 'mx', '');
+            dom_set_text($entry, 'mxprio', '');
+        }
+    } else {
+        dom_set_text($entry, 'domain', $domain);
+        dom_set_text($entry, 'server', $value);
+    }
+    $descr = trim((string)($payload['description'] ?? 'Managed DNS override'));
+    dom_set_text($entry, 'description', $descr . ' [' . dns_override_key($payload) . ']');
+
+    $tmp = $configPath . '.controller_dns_tmp';
+    if (!$dom->save($tmp)) {
+        throw new RuntimeException('Cannot write temporary config');
+    }
+    chmod($tmp, 0600);
+    if (!rename($tmp, $configPath)) {
+        @unlink($tmp);
+        throw new RuntimeException('Cannot replace config.xml');
+    }
+    $reload = [];
+    if (is_executable('/usr/local/sbin/configctl')) {
+        $reload[] = run_command_capture('/usr/local/sbin/configctl unbound reload');
+        $reload[] = run_command_capture('/usr/local/sbin/configctl template reload OPNsense/Unbound');
+    }
+    return ['ok' => true, 'override_id' => $payload['override_id'] ?? null, 'name' => $name, 'type' => $type, 'created' => $created, 'local_backup' => $localBackup, 'reload' => $reload];
+}
+
 function do_poll(array $config): array
 {
     require_registered($config);
@@ -999,6 +1289,12 @@ function do_poll(array $config): array
             } elseif ($type === 'alias.apply') {
                 $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
                 $result = apply_alias_job($payload);
+            } elseif ($type === 'firewall.rule_template.apply') {
+                $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
+                $result = apply_firewall_rule_template_job($payload);
+            } elseif ($type === 'dns.override.apply') {
+                $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
+                $result = apply_dns_override_job($payload);
             } else {
                 $status = 'failed';
                 $error = 'Unknown job type: ' . $type;

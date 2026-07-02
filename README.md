@@ -1,29 +1,39 @@
-# OPNsense Additional Menu v0.1.53
+# OPNsense Additional menu v0.1.54
 
-Версия для работы с OPNsense Central Controller v0.1.3.
+Обновление агента для OPNsense Central Controller v0.1.4.
 
-Добавлено в агент Controller connect:
+## Новые job-типы
 
-- расширенный `status.collect` / `system.info`;
-- `config.restore` для rollback config.xml;
-- локальный backup перед rollback;
-- центральный backup текущей конфигурации перед rollback;
-- `wireguard.status`;
-- `wireguard.peer.set_enabled`;
-- возврат статуса WireGuard peers в центральную панель.
+- `firewall.rule_template.apply`
+- `dns.override.apply`
 
-Установка:
+Существующие job-типы сохранены:
+
+- `status.collect`
+- `system.info`
+- `config.backup`
+- `config.restore`
+- `wireguard.status`
+- `wireguard.peer.set_enabled`
+- `alias.apply`
+- `ping`
+
+## Безопасность
+
+Перед изменением `/conf/config.xml` агент делает локальный backup:
+
+```text
+/conf/config.xml.controller_firewall_YYYYmmdd_HHMMSS.bak
+/conf/config.xml.controller_dns_YYYYmmdd_HHMMSS.bak
+```
+
+## Установка
 
 ```sh
 cd /
-fetch -o /tmp/opnsense-additional-menu-v0.1.53-root.zip "URL_К_АРХИВУ"
-unzip -o /tmp/opnsense-additional-menu-v0.1.53-root.zip -d /
+fetch -o /tmp/opnsense-additional-menu-v0.1.54-root.zip "URL_К_АРХИВУ"
+unzip -o /tmp/opnsense-additional-menu-v0.1.54-root.zip -d /
 chmod +x /install.sh
 /install.sh
 configctl webgui restart
 ```
-
-После обновления проверь:
-
-- Дополнительно -> Controller connect -> Run once.
-- В центральной панели создай задания `system.info`, `wireguard.status`, `config.backup`.
