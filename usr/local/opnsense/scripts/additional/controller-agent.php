@@ -4,19 +4,39 @@
 declare(strict_types=1);
 
 const CONFIG_FILE = '/usr/local/opnsense/scripts/additional/controller_agent.json';
-const AGENT_VERSION_FILE = '/usr/local/opnsense/scripts/additional/VERSION';
+const AGENT_VERSION_FILE = '/usr/local/opnsense/scripts/additional/AGENT_VERSION';
+const MENU_VERSION_FILE = '/usr/local/opnsense/scripts/additional/MENU_VERSION';
+const PACKAGE_VERSION_FILE = '/usr/local/opnsense/scripts/additional/VERSION';
+const PROTOCOL_VERSION_FILE = '/usr/local/opnsense/scripts/additional/PROTOCOL_VERSION';
 const STATUS_FILE = '/var/run/additional_controller_agent_status.json';
 const LOCK_FILE = '/tmp/additional_controller_agent.lock';
 
-function agent_version(): string
+function first_readable_version(array $files, string $fallback): string
 {
-    if (is_readable(AGENT_VERSION_FILE)) {
-        $version = trim((string)file_get_contents(AGENT_VERSION_FILE));
-        if ($version !== '') {
-            return $version;
+    foreach ($files as $file) {
+        if (is_readable($file)) {
+            $version = trim((string)file_get_contents($file));
+            if ($version !== '') {
+                return $version;
+            }
         }
     }
-    return 'v0.1.63';
+    return $fallback;
+}
+
+function agent_version(): string
+{
+    return first_readable_version([AGENT_VERSION_FILE, PACKAGE_VERSION_FILE], 'v0.1.64');
+}
+
+function menu_version(): string
+{
+    return first_readable_version([MENU_VERSION_FILE, PACKAGE_VERSION_FILE], 'v0.1.64');
+}
+
+function protocol_version(): string
+{
+    return first_readable_version([PROTOCOL_VERSION_FILE], '1');
 }
 
 function default_config(): array
@@ -521,6 +541,8 @@ function collect_status(): array
         'hostname' => gethostname() ?: null,
         'opnsense_version' => opnsense_version(),
         'agent_version' => agent_version(),
+        'menu_version' => menu_version(),
+        'protocol_version' => protocol_version(),
         'freebsd_version' => freebsd_version(),
         'cpu_load' => isset($load[0]) ? round((float)$load[0], 2) : null,
         'cpu_load_5' => isset($load[1]) ? round((float)$load[1], 2) : null,
@@ -579,6 +601,8 @@ function do_register(array $argv): array
         'hostname' => gethostname() ?: '',
         'opnsense_version' => opnsense_version(),
         'agent_version' => agent_version(),
+        'menu_version' => menu_version(),
+        'protocol_version' => protocol_version(),
     ], [], $verifyTls);
     if (empty($resp['ok']) || empty($resp['device_secret'])) {
         throw new RuntimeException('Registration failed: ' . json_encode($resp, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
@@ -1980,6 +2004,144 @@ function firewall_rules_collect_job(): array
     ];
 }
 
+
+function http_download_file(string $url, string $dest, array $headers = [], bool $verifyTls = true): array
+{
+    $dir = dirname($dest);
+    if (!is_dir($dir)) {
+        mkdir($dir, 0700, true);
+    }
+    $tmp = $dest . '.tmp';
+    if (function_exists('curl_init')) {
+        $fp = fopen($tmp, 'wb');
+        if ($fp === false) {
+            throw new RuntimeException('Cannot write temporary file: ' . $tmp);
+        }
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_FILE => $fp,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_CONNECTTIMEOUT => 20,
+            CURLOPT_TIMEOUT => 300,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_SSL_VERIFYPEER => $verifyTls,
+            CURLOPT_SSL_VERIFYHOST => $verifyTls ? 2 : 0,
+            CURLOPT_USERAGENT => 'OPNsenseControllerAgent/' . agent_version(),
+        ]);
+        $ok = curl_exec($ch);
+        $err = curl_error($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        fclose($fp);
+        if (!$ok || $code < 200 || $code >= 300) {
+            @unlink($tmp);
+            throw new RuntimeException('Download failed HTTP ' . $code . ($err ? ': ' . $err : ''));
+        }
+    } else {
+        $headerLines = implode("\r\n", $headers);
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'header' => $headerLines,
+                'timeout' => 300,
+                'ignore_errors' => true,
+            ],
+            'ssl' => [
+                'verify_peer' => $verifyTls,
+                'verify_peer_name' => $verifyTls,
+            ],
+        ]);
+        $data = file_get_contents($url, false, $context);
+        if ($data === false) {
+            throw new RuntimeException('Download failed');
+        }
+        if (file_put_contents($tmp, $data, LOCK_EX) === false) {
+            throw new RuntimeException('Cannot write temporary file: ' . $tmp);
+        }
+    }
+    rename($tmp, $dest);
+    chmod($dest, 0600);
+    return [
+        'path' => $dest,
+        'sha256' => hash_file('sha256', $dest) ?: '',
+        'size' => filesize($dest) ?: 0,
+    ];
+}
+
+function controller_update_backup(): string
+{
+    $dir = '/conf/additional-menu-backups';
+    if (!is_dir($dir)) {
+        mkdir($dir, 0700, true);
+    }
+    $file = $dir . '/additional-menu-before-update-' . date('Ymd_His') . '.tgz';
+    $cmd = 'tar -czf ' . escapeshellarg($file)
+        . ' /usr/local/opnsense/mvc/app/controllers/OPNsense/Additional'
+        . ' /usr/local/opnsense/mvc/app/models/OPNsense/Additional'
+        . ' /usr/local/opnsense/mvc/app/views/OPNsense/Additional'
+        . ' /usr/local/opnsense/scripts/additional'
+        . ' /usr/local/opnsense/service/conf/actions.d/actions_additional_central.conf'
+        . ' 2>/dev/null';
+    $r = run_command_capture($cmd);
+    if (($r['exit_code'] ?? 1) !== 0) {
+        return '';
+    }
+    return $file;
+}
+
+function system_menu_update_job(array $config, array $payload): array
+{
+    require_registered($config);
+    $packageUuid = trim((string)($payload['package_uuid'] ?? ''));
+    $expectedSha = strtolower(trim((string)($payload['sha256'] ?? '')));
+    if ($packageUuid === '') {
+        throw new RuntimeException('package_uuid is required');
+    }
+    if ($expectedSha === '' || !preg_match('/^[0-9a-f]{64}$/', $expectedSha)) {
+        throw new RuntimeException('valid sha256 is required');
+    }
+    $server = validate_server_url((string)$config['server_url']);
+    $downloadUrl = $server . '/api/agent/updates/download/' . rawurlencode($packageUuid);
+    $dest = '/tmp/opnsense-additional-menu-' . preg_replace('/[^a-zA-Z0-9_.-]/', '_', $packageUuid) . '.zip';
+    $download = http_download_file($downloadUrl, $dest, auth_headers($config), bool01($config['verify_tls'] ?? '1') === '1');
+    if (strtolower((string)$download['sha256']) !== $expectedSha) {
+        @unlink($dest);
+        throw new RuntimeException('SHA256 mismatch. Expected ' . $expectedSha . ', got ' . $download['sha256']);
+    }
+    $backupFile = controller_update_backup();
+    $unzip = run_command_capture('/usr/local/bin/unzip -o ' . escapeshellarg($dest) . ' -d /');
+    if (($unzip['exit_code'] ?? 1) !== 0) {
+        throw new RuntimeException('unzip failed: ' . (($unzip['stderr'] ?? '') ?: ($unzip['stdout'] ?? '')));
+    }
+    if (is_file('/install.sh')) {
+        @chmod('/install.sh', 0755);
+        $install = run_command_capture('ADDITIONAL_UPDATER_MODE=1 /bin/sh /install.sh');
+        if (($install['exit_code'] ?? 1) !== 0) {
+            throw new RuntimeException('install.sh failed: ' . (($install['stderr'] ?? '') ?: ($install['stdout'] ?? '')));
+        }
+    } elseif (is_file('/usr/local/opnsense/scripts/additional/package/install.sh')) {
+        @chmod('/usr/local/opnsense/scripts/additional/package/install.sh', 0755);
+        $install = run_command_capture('ADDITIONAL_UPDATER_MODE=1 /bin/sh /usr/local/opnsense/scripts/additional/package/install.sh');
+        if (($install['exit_code'] ?? 1) !== 0) {
+            throw new RuntimeException('package install.sh failed: ' . (($install['stderr'] ?? '') ?: ($install['stdout'] ?? '')));
+        }
+    }
+    run_command_capture('configctl webgui restart >/dev/null 2>&1 || true');
+    @unlink($dest);
+    return [
+        'ok' => true,
+        'package_uuid' => $packageUuid,
+        'component' => (string)($payload['component'] ?? 'opnsense-additional-menu'),
+        'target_version' => (string)($payload['version'] ?? ''),
+        'sha256' => $download['sha256'],
+        'size' => $download['size'],
+        'backup_file' => $backupFile,
+        'agent_version_after' => agent_version(),
+        'menu_version_after' => menu_version(),
+        'protocol_version_after' => protocol_version(),
+    ];
+}
+
 function do_poll(array $config): array
 {
     require_registered($config);
@@ -2011,6 +2173,9 @@ function do_poll(array $config): array
                 $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
                 $result = wireguard_set_peer_enabled_job($payload);
                 $result['status_after'] = wireguard_status_job();
+            } elseif ($type === 'system.menu.update') {
+                $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
+                $result = system_menu_update_job($config, $payload);
             } elseif ($type === 'ping') {
                 $result = ['pong' => true, 'time' => date(DATE_ATOM)];
             } elseif ($type === 'alias.apply') {
