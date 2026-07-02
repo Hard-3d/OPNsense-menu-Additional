@@ -16,7 +16,7 @@ function agent_version(): string
             return $version;
         }
     }
-    return 'v0.1.59';
+    return 'v0.1.60';
 }
 
 function default_config(): array
@@ -605,7 +605,7 @@ function do_heartbeat(array $config): array
     return ['status' => 'ok', 'message' => 'Heartbeat sent', 'status_payload' => $status, 'response' => $resp];
 }
 
-function do_backup(array $config, string $backupType = 'agent', string $comment = 'Additional menu backup', ?int $sourceJobId = null): array
+function do_backup(array $config, string $backupType = 'agent', string $comment = 'Additional menu backup', ?int $sourceJobId = null, ?string $sourceJobUuid = null): array
 {
     require_registered($config);
     $path = '/conf/config.xml';
@@ -620,16 +620,18 @@ function do_backup(array $config, string $backupType = 'agent', string $comment 
         'backup_type' => $backupType,
         'original_filename' => 'config.xml',
         'source_job_id' => $sourceJobId,
+        'source_job_uuid' => $sourceJobUuid,
     ], auth_headers($config), bool01($config['verify_tls'] ?? '1') === '1');
     write_status(['ok' => true, 'last_action' => 'backup', 'message' => 'Backup uploaded', 'response' => $resp]);
     return ['status' => 'ok', 'message' => 'Backup uploaded', 'response' => $resp];
 }
 
-function do_job_result(array $config, int $jobId, string $status, array $result, ?string $error): array
+function do_job_result(array $config, int $jobId, string $status, array $result, ?string $error, ?string $jobUuid = null): array
 {
     $server = validate_server_url((string)$config['server_url']);
     return http_json('POST', $server . '/api/agent/jobs/result', [
         'job_id' => $jobId,
+        'job_uuid' => $jobUuid,
         'status' => $status,
         'result' => $result,
         'error' => $error,
@@ -1333,7 +1335,7 @@ function enrich_wg_instances_with_runtime(array $instances, array $runtimeInfo, 
         $port = trim((string)($inst['listen_port'] ?? ''));
         if ($port !== '' && !empty($byPort[$port])) {
             $inst['interface'] = $byPort[$port];
-            $inst['interface_source'] = 'wg_dump_listen_port';
+            $inst['interface_source'] = 'listen_port';
             $used[$byPort[$port]] = true;
             continue;
         }
@@ -1355,8 +1357,16 @@ function enrich_wg_instances_with_runtime(array $instances, array $runtimeInfo, 
         if (trim((string)($inst['interface'] ?? '')) === '' && $remainingRuntime) {
             $ifname = array_shift($remainingRuntime);
             $inst['interface'] = $ifname;
-            $inst['interface_source'] = 'runtime_order_fallback';
+            $inst['interface_source'] = 'runtime_order';
             $used[$ifname] = true;
+        }
+    }
+    unset($inst);
+
+    foreach ($instances as &$inst) {
+        $ifname = trim((string)($inst['interface'] ?? ''));
+        if ($ifname !== '') {
+            $inst['wg_interface'] = $ifname;
         }
     }
     unset($inst);
@@ -1978,6 +1988,7 @@ function do_poll(array $config): array
     $processed = [];
     foreach (($jobsResp['jobs'] ?? []) as $job) {
         $jobId = (int)($job['id'] ?? 0);
+        $jobUuid = trim((string)($job['uuid'] ?? ''));
         $type = (string)($job['type'] ?? '');
         $status = 'done';
         $result = ['ok' => true];
@@ -1987,7 +1998,7 @@ function do_poll(array $config): array
                 $result = collect_status();
                 http_json('POST', $server . '/api/agent/heartbeat', $result, auth_headers($config), bool01($config['verify_tls'] ?? '1') === '1');
             } elseif ($type === 'config.backup') {
-                $r = do_backup($config, 'manual', 'Backup requested by central controller', $jobId);
+                $r = do_backup($config, 'manual', 'Backup requested by central controller', $jobId, $jobUuid);
                 $result = $r['response'] ?? $r;
             } elseif ($type === 'config.restore') {
                 $payload = is_array($job['payload'] ?? null) ? $job['payload'] : [];
@@ -2022,9 +2033,9 @@ function do_poll(array $config): array
             $result = ['ok' => false];
         }
         if ($jobId > 0) {
-            do_job_result($config, $jobId, $status, $result, $error);
+            do_job_result($config, $jobId, $status, $result, $error, $jobUuid);
         }
-        $processed[] = ['id' => $jobId, 'type' => $type, 'status' => $status, 'error' => $error];
+        $processed[] = ['id' => $jobId, 'uuid' => $jobUuid, 'type' => $type, 'status' => $status, 'error' => $error];
     }
     $count = count($processed);
     write_status(['ok' => true, 'last_action' => 'poll', 'message' => 'Jobs processed: ' . $count, 'processed' => $processed]);
