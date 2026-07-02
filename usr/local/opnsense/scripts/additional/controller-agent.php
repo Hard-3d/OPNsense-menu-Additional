@@ -2068,6 +2068,45 @@ function http_download_file(string $url, string $dest, array $headers = [], bool
     ];
 }
 
+
+function command_output_text(array $result): string
+{
+    foreach (['output', 'stderr', 'stdout'] as $key) {
+        if (isset($result[$key]) && trim((string)$result[$key]) !== '') {
+            return trim((string)$result[$key]);
+        }
+    }
+    return 'exit_code=' . (string)($result['exit_code'] ?? 'unknown');
+}
+
+function find_unzip_binary(): string
+{
+    $candidates = [
+        '/usr/bin/unzip',
+        '/usr/local/bin/unzip',
+        '/bin/unzip',
+    ];
+    foreach ($candidates as $candidate) {
+        if (is_executable($candidate)) {
+            return $candidate;
+        }
+    }
+    $which = run_command_capture('command -v unzip');
+    if (($which['exit_code'] ?? 1) === 0) {
+        $path = trim((string)($which['output'] ?? ''));
+        if ($path !== '' && is_executable($path)) {
+            return $path;
+        }
+    }
+    throw new RuntimeException('unzip binary not found. Checked /usr/bin/unzip, /usr/local/bin/unzip and PATH');
+}
+
+function zip_test_file(string $zipFile): array
+{
+    $unzip = find_unzip_binary();
+    return run_command_capture($unzip . ' -tq ' . escapeshellarg($zipFile));
+}
+
 function controller_update_backup(): string
 {
     $dir = '/conf/additional-menu-backups';
@@ -2108,22 +2147,27 @@ function system_menu_update_job(array $config, array $payload): array
         @unlink($dest);
         throw new RuntimeException('SHA256 mismatch. Expected ' . $expectedSha . ', got ' . $download['sha256']);
     }
+    $zipTest = zip_test_file($dest);
+    if (($zipTest['exit_code'] ?? 1) !== 0) {
+        throw new RuntimeException('Downloaded file is not a valid zip: ' . command_output_text($zipTest));
+    }
     $backupFile = controller_update_backup();
-    $unzip = run_command_capture('/usr/local/bin/unzip -o ' . escapeshellarg($dest) . ' -d /');
+    $unzipBin = find_unzip_binary();
+    $unzip = run_command_capture($unzipBin . ' -o ' . escapeshellarg($dest) . ' -d /');
     if (($unzip['exit_code'] ?? 1) !== 0) {
-        throw new RuntimeException('unzip failed: ' . (($unzip['stderr'] ?? '') ?: ($unzip['stdout'] ?? '')));
+        throw new RuntimeException('unzip failed using ' . $unzipBin . ': ' . command_output_text($unzip));
     }
     if (is_file('/install.sh')) {
         @chmod('/install.sh', 0755);
         $install = run_command_capture('ADDITIONAL_UPDATER_MODE=1 /bin/sh /install.sh');
         if (($install['exit_code'] ?? 1) !== 0) {
-            throw new RuntimeException('install.sh failed: ' . (($install['stderr'] ?? '') ?: ($install['stdout'] ?? '')));
+            throw new RuntimeException('install.sh failed: ' . command_output_text($install));
         }
     } elseif (is_file('/usr/local/opnsense/scripts/additional/package/install.sh')) {
         @chmod('/usr/local/opnsense/scripts/additional/package/install.sh', 0755);
         $install = run_command_capture('ADDITIONAL_UPDATER_MODE=1 /bin/sh /usr/local/opnsense/scripts/additional/package/install.sh');
         if (($install['exit_code'] ?? 1) !== 0) {
-            throw new RuntimeException('package install.sh failed: ' . (($install['stderr'] ?? '') ?: ($install['stdout'] ?? '')));
+            throw new RuntimeException('package install.sh failed: ' . command_output_text($install));
         }
     }
     run_command_capture('configctl webgui restart >/dev/null 2>&1 || true');
